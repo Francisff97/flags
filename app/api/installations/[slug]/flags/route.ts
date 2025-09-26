@@ -34,7 +34,7 @@ export async function GET(
     if (!raw) {
       return NextResponse.json({ features: {} });
     }
-    const parsed = JSON.parse(raw);
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
     return NextResponse.json(parsed);
   } catch (e) {
     return NextResponse.json({ features: {} });
@@ -73,7 +73,7 @@ export async function PUT(
   let current: FlagsDoc = { features: {} };
   try {
     const prevRaw = await kvGet(keyFlags(slug));
-    if (prevRaw) current = JSON.parse(prevRaw);
+    if (prevRaw) current = typeof prevRaw === 'string' ? JSON.parse(prevRaw) : prevRaw;
   } catch {}
 
   const merged: FlagsDoc = {
@@ -89,7 +89,7 @@ export async function PUT(
   try {
     const hKey = keyHistory(slug);
     const prev = await kvGet(hKey);
-    const arr: FlagsDoc[] = prev ? JSON.parse(prev) : [];
+    const arr: FlagsDoc[] = prev ? (typeof prev === 'string' ? JSON.parse(prev) : prev) : [];
     arr.unshift(merged);
     if (arr.length > MAX_HISTORY) arr.length = MAX_HISTORY;
     await kvSet(hKey, arr);

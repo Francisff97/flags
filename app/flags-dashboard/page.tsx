@@ -45,8 +45,8 @@ export default async function FlagsDashboard() {
     if (defaultSlug) {
       const raw = await kvGet(`flags:${defaultSlug}`);
       if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed?.features) flags = parsed;
+        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        if (parsed?.features) flags = parsed as Flags;
       }
     }
   } catch {}
