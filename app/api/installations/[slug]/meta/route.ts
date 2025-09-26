@@ -9,9 +9,10 @@ export async function GET(_req: Request, { params }: { params: { slug: string } 
   const slug = (params.slug || '').toLowerCase();
   try {
     const raw = await kvGet(keyMeta(slug));
-    return NextResponse.json(raw ? JSON.parse(raw) : {});
+    const data = raw ? JSON.parse(raw) : {};
+    return NextResponse.json({ ok: true, slug, ...data });
   } catch {
-    return NextResponse.json({});
+    return NextResponse.json({ ok: true, slug, platform_url: '' });
   }
 }
 
@@ -33,7 +34,8 @@ export async function PUT(req: Request, { params }: { params: { slug: string } }
     ? body.platform_url.replace(/\/+$/,'')
     : '';
 
-  await kvSet(keyMeta(slug), JSON.stringify({ platform_url }));
+  // 🔧 NIENTE stringify: ci pensa kvSet
+  await kvSet(keyMeta(slug), { platform_url });
   await upsertInstallation(slug);
 
   return NextResponse.json({ ok:true, slug, platform_url });
