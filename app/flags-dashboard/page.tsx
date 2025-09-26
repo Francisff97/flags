@@ -80,18 +80,21 @@ export default async function FlagsDashboard() {
     const raw = JSON.stringify(payload);
     const sig = signPayload(raw);
   
-    const base = flagsOrigin();
+    // Costruisci ORIGIN assoluto per chiamare l'API del progetto "flags"
+    const h = headers();
+    const base =
+      (process.env.FLAGS_BASE_URL?.replace(/\/+$/,''))
+      || `${(h.get('x-forwarded-proto') || 'https')}://${(h.get('host') || '').replace(/\/+$/,'')}`;
   
-    // 1) salva i flag su Flags (URL assoluto)
+    // 1) Salva i flag su Flags
     const putRes = await fetch(`${base}/api/installations/${slug}/flags`, {
       method: 'PUT',
       headers: {
         'content-type': 'application/json',
         'x-signature': sig,
-        // no cache su server actions
       },
-      body: raw,
       cache: 'no-store',
+      body: raw,
     });
   
     if (!putRes.ok) {
@@ -99,16 +102,17 @@ export default async function FlagsDashboard() {
       return;
     }
   
-    // 2) prendi la platform_url da meta
+    // 2) Recupera la platform_url dal meta
     const metaRes = await fetch(`${base}/api/installations/${slug}/meta`, { cache: 'no-store' });
     if (!metaRes.ok) {
       console.error('saveAction error (GET meta):', metaRes.status, await metaRes.text());
+      revalidatePath('/flags-dashboard');
       return;
     }
     const meta = await metaRes.json().catch(() => null);
     const platformUrl = meta?.platform_url?.replace(/\/+$/,'');
     if (platformUrl) {
-      // 3) notifica la piattaforma per invalidare la cache dei flags
+      // 3) Notifica la piattaforma per invalidare la cache flags locale
       const body2 = JSON.stringify({ slug });
       const sig2  = signPayload(body2);
   
@@ -122,14 +126,13 @@ export default async function FlagsDashboard() {
         if (!refreshRes.ok) {
           console.warn('platform refresh not ok:', refreshRes.status, await refreshRes.text());
         }
-      } catch (e) {
-        console.warn('platform refresh failed:', (e as Error).message);
+      } catch (e:any) {
+        console.warn('platform refresh failed:', e.message);
       }
     } else {
       console.warn('No platform_url in meta for', slug);
     }
   
-    // aggiorna la pagina
     revalidatePath('/flags-dashboard');
   }
   
