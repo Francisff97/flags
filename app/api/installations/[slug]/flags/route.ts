@@ -83,7 +83,7 @@ export async function PUT(
     updated_by: req.headers.get('x-actor') ?? undefined,
   };
 
-  await kvSet(keyFlags(slug), JSON.stringify(merged));
+  await kvSet(keyFlags(slug), merged);
   await upsertInstallation(slug);
 
   try {
@@ -92,7 +92,7 @@ export async function PUT(
     const arr: FlagsDoc[] = prev ? JSON.parse(prev) : [];
     arr.unshift(merged);
     if (arr.length > MAX_HISTORY) arr.length = MAX_HISTORY;
-    await kvSet(hKey, JSON.stringify(arr));
+    await kvSet(hKey, arr);
   } catch {}
 
   return NextResponse.json({ ok: true, slug, saved: merged });
