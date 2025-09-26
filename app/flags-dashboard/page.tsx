@@ -5,6 +5,7 @@ import { listInstallations } from '@/lib/installations';
 import { kvGet, kvSet } from '@/lib/kv';
 import { verifySignature, signPayload } from '@/lib/sign';
 import { revalidatePath } from 'next/cache';
+import { headers } from 'next/headers';
 
 export const dynamic = 'force-dynamic';
 
@@ -50,6 +51,16 @@ export default async function FlagsDashboard() {
     }
   } catch {}
 
+  function flagsOrigin() {
+    // 1) usa env se presente (consigliato su Vercel)
+    if (process.env.FLAGS_BASE_URL) return process.env.FLAGS_BASE_URL.replace(/\/+$/,'');
+    // 2) ricava da headers (x-forwarded-proto + host)
+    const h = headers();
+    const proto = h.get('x-forwarded-proto') || 'https';
+    const host  = h.get('host') || '';
+    return `${proto}://${host}`;
+  }
+  
   async function saveAction(formData: FormData) {
     'use server';
   
@@ -69,28 +80,56 @@ export default async function FlagsDashboard() {
     const raw = JSON.stringify(payload);
     const sig = signPayload(raw);
   
-    // 1) salva su Flags (path relativo)
-    const res = await fetch(`/api/installations/${slug}/flags`, {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json', 'x-signature': sig },
-      body: raw,
-    });
-    if (!res.ok) { console.error('Flags save failed', await res.text()); return; }
+    const base = flagsOrigin();
   
-    // 2) prendi la platform_url da meta
-    const meta = await fetch(`/api/installations/${slug}/meta`, { cache: 'no-store' }).then(r=>r.json()).catch(()=>null);
-    const platformUrl = meta?.platform_url;
-    if (platformUrl) {
-      const body2 = JSON.stringify({ slug });
-      const sig2 = signPayload(body2);
-      // notifica Laravel
-      await fetch(`${platformUrl.replace(/\/+$/,'')}/api/flags/refresh`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-signature': sig2 },
-        body: body2,
-      }).catch(()=>{});
+    // 1) salva i flag su Flags (URL assoluto)
+    const putRes = await fetch(`${base}/api/installations/${slug}/flags`, {
+      method: 'PUT',
+      headers: {
+        'content-type': 'application/json',
+        'x-signature': sig,
+        // no cache su server actions
+      },
+      body: raw,
+      cache: 'no-store',
+    });
+  
+    if (!putRes.ok) {
+      console.error('saveAction error (PUT flags):', putRes.status, await putRes.text());
+      return;
     }
   
+    // 2) prendi la platform_url da meta
+    const metaRes = await fetch(`${base}/api/installations/${slug}/meta`, { cache: 'no-store' });
+    if (!metaRes.ok) {
+      console.error('saveAction error (GET meta):', metaRes.status, await metaRes.text());
+      return;
+    }
+    const meta = await metaRes.json().catch(() => null);
+    const platformUrl = meta?.platform_url?.replace(/\/+$/,'');
+    if (platformUrl) {
+      // 3) notifica la piattaforma per invalidare la cache dei flags
+      const body2 = JSON.stringify({ slug });
+      const sig2  = signPayload(body2);
+  
+      try {
+        const refreshRes = await fetch(`${platformUrl}/api/flags/refresh`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-signature': sig2 },
+          body: body2,
+          cache: 'no-store',
+        });
+        if (!refreshRes.ok) {
+          console.warn('platform refresh not ok:', refreshRes.status, await refreshRes.text());
+        }
+      } catch (e) {
+        console.warn('platform refresh failed:', (e as Error).message);
+      }
+    } else {
+      console.warn('No platform_url in meta for', slug);
+    }
+  
+    // aggiorna la pagina
     revalidatePath('/flags-dashboard');
   }
   
