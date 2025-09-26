@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation';
 import { listInstallations } from '@/lib/installations';
 import { kvGet, kvSet } from '@/lib/kv';
 import { verifySignature, signPayload } from '@/lib/sign';
+import { revalidatePath } from 'next/cache';
 
 export const dynamic = 'force-dynamic';
 
@@ -51,30 +52,48 @@ export default async function FlagsDashboard() {
 
   async function saveAction(formData: FormData) {
     'use server';
-    const slug = String(formData.get('slug') || '').toLowerCase();
-    if (!slug) return;
   
-    const payload = {
-      features: {
-        addons: formData.get('addons') === 'on',
-        email_templates: formData.get('email_templates') === 'on',
-        discord_integration: formData.get('discord_integration') === 'on',
-        tutorials: formData.get('tutorials') === 'on',
-        announcements: formData.get('announcements') === 'on',
+    try {
+      const slug = String(formData.get('slug') || '').toLowerCase();
+      if (!slug) throw new Error('Missing slug');
+  
+      const payload = {
+        features: {
+          addons:               formData.get('addons') === 'on',
+          email_templates:      formData.get('email_templates') === 'on',
+          discord_integration:  formData.get('discord_integration') === 'on',
+          tutorials:            formData.get('tutorials') === 'on',
+          announcements:        formData.get('announcements') === 'on',
+        },
+      };
+  
+      const raw = JSON.stringify(payload);
+      const sig = signPayload(raw); // usa FLAGS_SIGNING_SECRET lato server
+  
+      // Path RELATIVO: niente BASE_URL
+      const res = await fetch(`/api/installations/${slug}/flags`, {
+        method: 'PUT',
+        headers: {
+          'content-type': 'application/json',
+          'x-signature': sig,
+        },
+        body: raw,
+        // IMPORTANTISSIMO: questo è un server action → fetch lato server. Non serve credentials.
+      });
+  
+      if (!res.ok) {
+        const txt = await res.text();
+        console.error('Save flags failed', res.status, txt);
+        throw new Error(`Save failed (${res.status})`);
       }
-    };
   
-    const raw = JSON.stringify(payload);
-    const sig = signPayload(raw); // usa lib/sign.ts che già hai
-  
-    await fetch(`${process.env.BASE_URL}/api/installations/${slug}/flags`, {
-      method: 'PUT',
-      headers: {
-        'content-type': 'application/json',
-        'x-signature': sig,
-      },
-      body: raw,
-    });
+      // Ricarica i dati a video
+      revalidatePath('/flags-dashboard');
+    } catch (err) {
+      console.error('saveAction error:', err);
+      // NON rilanciare l’errore (altrimenti il Server Component va in 500)
+      // Volendo potresti salvare un flash in KV e mostrarlo.
+    }
   }
 
   return (
