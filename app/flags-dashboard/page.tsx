@@ -53,48 +53,47 @@ export default async function FlagsDashboard() {
   async function saveAction(formData: FormData) {
     'use server';
   
-    try {
-      const slug = String(formData.get('slug') || '').toLowerCase();
-      if (!slug) throw new Error('Missing slug');
+    const slug = String(formData.get('slug') || '').toLowerCase();
+    if (!slug) return;
   
-      const payload = {
-        features: {
-          addons:               formData.get('addons') === 'on',
-          email_templates:      formData.get('email_templates') === 'on',
-          discord_integration:  formData.get('discord_integration') === 'on',
-          tutorials:            formData.get('tutorials') === 'on',
-          announcements:        formData.get('announcements') === 'on',
-        },
-      };
+    const payload = {
+      features: {
+        addons:               formData.get('addons') === 'on',
+        email_templates:      formData.get('email_templates') === 'on',
+        discord_integration:  formData.get('discord_integration') === 'on',
+        tutorials:            formData.get('tutorials') === 'on',
+        announcements:        formData.get('announcements') === 'on',
+      },
+    };
   
-      const raw = JSON.stringify(payload);
-      const sig = signPayload(raw); // usa FLAGS_SIGNING_SECRET lato server
+    const raw = JSON.stringify(payload);
+    const sig = signPayload(raw);
   
-      // Path RELATIVO: niente BASE_URL
-      const res = await fetch(`/api/installations/${slug}/flags`, {
-        method: 'PUT',
-        headers: {
-          'content-type': 'application/json',
-          'x-signature': sig,
-        },
-        body: raw,
-        // IMPORTANTISSIMO: questo è un server action → fetch lato server. Non serve credentials.
-      });
+    // 1) salva su Flags (path relativo)
+    const res = await fetch(`/api/installations/${slug}/flags`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', 'x-signature': sig },
+      body: raw,
+    });
+    if (!res.ok) { console.error('Flags save failed', await res.text()); return; }
   
-      if (!res.ok) {
-        const txt = await res.text();
-        console.error('Save flags failed', res.status, txt);
-        throw new Error(`Save failed (${res.status})`);
-      }
-  
-      // Ricarica i dati a video
-      revalidatePath('/flags-dashboard');
-    } catch (err) {
-      console.error('saveAction error:', err);
-      // NON rilanciare l’errore (altrimenti il Server Component va in 500)
-      // Volendo potresti salvare un flash in KV e mostrarlo.
+    // 2) prendi la platform_url da meta
+    const meta = await fetch(`/api/installations/${slug}/meta`, { cache: 'no-store' }).then(r=>r.json()).catch(()=>null);
+    const platformUrl = meta?.platform_url;
+    if (platformUrl) {
+      const body2 = JSON.stringify({ slug });
+      const sig2 = signPayload(body2);
+      // notifica Laravel
+      await fetch(`${platformUrl.replace(/\/+$/,'')}/api/flags/refresh`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-signature': sig2 },
+        body: body2,
+      }).catch(()=>{});
     }
+  
+    revalidatePath('/flags-dashboard');
   }
+  
 
   return (
     <>
