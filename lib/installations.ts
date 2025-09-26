@@ -40,7 +40,7 @@ export async function upsertInstallation(slug: string): Promise<void> {
     current.push(s);
     current.sort();
     // salvo come stringa JSON pulita
-    await kvSet(KEY, JSON.stringify(current));
+    await kvSet(KEY, current);
   }
 }
 
