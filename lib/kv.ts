@@ -31,3 +31,22 @@ export async function kvDel(key: string): Promise<void> {
     headers: { Authorization: `Bearer ${TOKEN}` },
   });
 }
+// Prova a parsare JSON. Se il primo parse restituisce una stringa JSON,
+// tenta un secondo parse. Se fallisce, torna null.
+export function kvParseJSON(raw: string | null): any | null {
+  if (!raw) return null;
+  try {
+    const once = JSON.parse(raw);
+    if (typeof once === 'string') {
+      try { return JSON.parse(once); } catch { return once; }
+    }
+    return once;
+  } catch {
+    return null;
+  }
+}
+
+// Wrapper: salva sempre come JSON “pulito” (affidandosi a kvSet che già stringify-a)
+export async function kvSetJSON(key: string, value: any): Promise<void> {
+  await kvSet(key, value); // kvSet fa già JSON.stringify se non è stringa
+}
