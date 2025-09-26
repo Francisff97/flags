@@ -10,7 +10,6 @@ type Features = {
   tutorials?: boolean;
   announcements?: boolean;
 };
-
 type FlagsDoc = {
   features: Features;
   updated_at?: number;
@@ -21,16 +20,30 @@ const keyFlags   = (slug: string) => `flags:${slug}`;
 const keyHistory = (slug: string) => `flags:${slug}:history`;
 const MAX_HISTORY = 50;
 
+function safeParse<T = any>(raw: any): T | null {
+  try {
+    if (typeof raw !== 'string') return raw ?? null;
+    let x: any = JSON.parse(raw);
+    if (typeof x === 'string') {
+      try { x = JSON.parse(x); } catch {}
+    }
+    return x ?? null;
+  } catch { return null; }
+}
+
+// GET
 export async function GET(_req: Request, { params }: { params: { slug: string } }) {
   const slug = (params.slug || '').toLowerCase();
   try {
     const raw = await kvGet(keyFlags(slug));
-    return NextResponse.json(raw ? JSON.parse(raw) : { features: {} });
+    const parsed = safeParse<FlagsDoc>(raw);
+    return NextResponse.json(parsed ?? { features: {} });
   } catch {
     return NextResponse.json({ features: {} });
   }
 }
 
+// PUT
 export async function PUT(req: Request, { params }: { params: { slug: string } }) {
   const slug = (params.slug || '').toLowerCase();
 
@@ -40,36 +53,38 @@ export async function PUT(req: Request, { params }: { params: { slug: string } }
     return NextResponse.json({ ok:false, error:'invalid signature' }, { status:401 });
   }
 
-  let incoming: Partial<FlagsDoc> = {};
-  try { incoming = JSON.parse(raw); } catch {
-    return NextResponse.json({ ok:false, error:'invalid json' }, { status:400 });
-  }
+  const incoming = safeParse<Partial<FlagsDoc>>(raw) || {};
+  const incFeat  = (incoming as any)?.features ?? {};
+  const nextFeat: Features = {
+    addons:              !!incFeat.addons,
+    email_templates:     !!incFeat.email_templates,
+    discord_integration: !!incFeat.discord_integration,
+    tutorials:           !!incFeat.tutorials,
+    announcements:       !!incFeat.announcements,
+  };
 
-  const inc = (incoming.features ?? {}) as Features;
-  const next: FlagsDoc = {
-    features: {
-      addons:              !!inc.addons,
-      email_templates:     !!inc.email_templates,
-      discord_integration: !!inc.discord_integration,
-      tutorials:           !!inc.tutorials,
-      announcements:       !!inc.announcements,
-    },
+  const prevRaw = await kvGet(keyFlags(slug));
+  const current = (safeParse<FlagsDoc>(prevRaw) ?? { features: {} });
+
+  const merged: FlagsDoc = {
+    ...current,
+    features: { ...current.features, ...nextFeat },
     updated_at: Date.now(),
     updated_by: req.headers.get('x-actor') ?? undefined,
   };
 
-  // OVERWRITE pulito (niente merge col passato)
-  await kvSet(keyFlags(slug), JSON.stringify(next));
+  // salva OGGETTO (kvSet farà 1 sola stringify interna)
+  await kvSet(keyFlags(slug), merged);
   await upsertInstallation(slug);
 
-  // Storia (array di doc JSON)
+  // history compatta (array di OGGETTI)
   try {
-    const prev = await kvGet(keyHistory(slug));
-    const arr: FlagsDoc[] = prev ? JSON.parse(prev) : [];
-    arr.unshift(next);
+    const hPrev = await kvGet(keyHistory(slug));
+    const arr: FlagsDoc[] = safeParse(hPrev) ?? [];
+    arr.unshift(merged);
     if (arr.length > MAX_HISTORY) arr.length = MAX_HISTORY;
-    await kvSet(keyHistory(slug), JSON.stringify(arr));
+    await kvSet(keyHistory(slug), arr);
   } catch {}
 
-  return NextResponse.json({ ok:true, slug, saved: next });
+  return NextResponse.json({ ok:true, slug, saved: merged });
 }
