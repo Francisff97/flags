@@ -38,7 +38,7 @@ function normalize(value: any): string {
   if (typeof value === 'string') {
     // Se è una stringa che *sembra* JSON, “sbucciala” al massimo 2 volte
     let v: any = value;
-    for (let i = 0; i < 2; i++) {
+    for (let i = 0; i < 3; i++) {
       try {
         const parsed = JSON.parse(v);
         if (typeof parsed === 'string') { v = parsed; continue; }
