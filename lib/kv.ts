@@ -1,4 +1,3 @@
-// lib/kv.ts
 const URL   = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
 const TOKEN = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
 if (!URL || !TOKEN) throw new Error('KV env missing: set KV_REST_API_URL & KV_REST_API_TOKEN');
@@ -9,14 +8,12 @@ export async function kvGet(key: string): Promise<string | null> {
     cache: 'no-store',
   });
   if (!res.ok) return null;
-  const data = await res.json(); // Upstash: { result: string|null }
+  const data = await res.json();
   return typeof data?.result === 'string' ? data.result : null;
 }
 
-// Normalizza: salva SEMPRE un singolo JSON.stringify “pulito”
 function normalize(value: any): string {
   if (typeof value === 'string') {
-    // prova a sbucciare eventuale JSON stringato 1-2 volte
     let v: any = value;
     for (let i = 0; i < 2; i++) {
       try {
@@ -54,14 +51,24 @@ export async function kvDel(key: string): Promise<void> {
   });
 }
 
-// Parse “tollerante”: se il primo parse restituisce una stringa JSON, riprova una volta
+/** Parse robusto: sbuccia una o due volte e unwrap di 'value'/'result' */
 export function kvParseJSON(raw: string | null): any | null {
   if (!raw) return null;
   try {
-    const once = JSON.parse(raw);
-    if (typeof once === 'string') {
-      try { return JSON.parse(once); } catch { return once; }
+    let x: any = JSON.parse(raw);
+    // unwrap result/value comuni in Upstash/Gateway
+    if (x && typeof x === 'object' && ('result' in x || 'value' in x)) {
+      x = (x.result ?? x.value);
     }
-    return once;
-  } catch { return null; }
+    if (typeof x === 'string') {
+      try { return JSON.parse(x); } catch { return x; }
+    }
+    return x;
+  } catch {
+    return null;
+  }
+}
+
+export async function kvSetJSON(key: string, value: any): Promise<void> {
+  await kvSet(key, value);
 }
