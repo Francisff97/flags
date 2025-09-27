@@ -10,6 +10,7 @@ type Features = {
   tutorials?: boolean;
   announcements?: boolean;
 };
+
 type FlagsDoc = {
   features: Features;
   updated_at?: number;
@@ -31,7 +32,7 @@ function safeParse<T = any>(raw: any): T | null {
   } catch { return null; }
 }
 
-// GET
+// ---------- GET ----------
 export async function GET(_req: Request, { params }: { params: { slug: string } }) {
   const slug = (params.slug || '').toLowerCase();
   try {
@@ -43,7 +44,7 @@ export async function GET(_req: Request, { params }: { params: { slug: string } 
   }
 }
 
-// PUT
+// ---------- PUT (OVERWRITE) ----------
 export async function PUT(req: Request, { params }: { params: { slug: string } }) {
   const slug = (params.slug || '').toLowerCase();
 
@@ -55,6 +56,7 @@ export async function PUT(req: Request, { params }: { params: { slug: string } }
 
   const incoming = safeParse<Partial<FlagsDoc>>(raw) || {};
   const incFeat  = (incoming as any)?.features ?? {};
+
   const nextFeat: Features = {
     addons:              !!incFeat.addons,
     email_templates:     !!incFeat.email_templates,
@@ -63,28 +65,24 @@ export async function PUT(req: Request, { params }: { params: { slug: string } }
     announcements:       !!incFeat.announcements,
   };
 
-  const prevRaw = await kvGet(keyFlags(slug));
-  const current = (safeParse<FlagsDoc>(prevRaw) ?? { features: {} });
-
-  const merged: FlagsDoc = {
-    ...current,
-    features: { ...current.features, ...nextFeat },
+  // 🔒 SOVRASCRITTURA TOTALE (nessun merge col “current”)
+  const saved: FlagsDoc = {
+    features: nextFeat,
     updated_at: Date.now(),
     updated_by: req.headers.get('x-actor') ?? undefined,
   };
 
-  // salva OGGETTO (kvSet farà 1 sola stringify interna)
-  await kvSet(keyFlags(slug), merged);
+  await kvSet(keyFlags(slug), saved);
   await upsertInstallation(slug);
 
-  // history compatta (array di OGGETTI)
+  // history compatta (manteniamo traccia)
   try {
     const hPrev = await kvGet(keyHistory(slug));
     const arr: FlagsDoc[] = safeParse(hPrev) ?? [];
-    arr.unshift(merged);
+    arr.unshift(saved);
     if (arr.length > MAX_HISTORY) arr.length = MAX_HISTORY;
     await kvSet(keyHistory(slug), arr);
   } catch {}
 
-  return NextResponse.json({ ok:true, slug, saved: merged });
+  return NextResponse.json({ ok:true, slug, saved });
 }
