@@ -1,8 +1,12 @@
-import { kvGet, kvSet } from '@/lib/kv';
+// app/api/kv/ping/route.ts
+import { NextResponse } from 'next/server';
 
 export async function GET() {
-  // scrive e legge una chiave di test
-  await kvSet('ping', { ok: true, at: Date.now() });
-  const v = await kvGet('ping');
-  return Response.json({ ping: v }, { status: 200 });
+  const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL || 'N/A';
+  return NextResponse.json({
+    ok: true,
+    kv_url: url,
+    hint: 'Assicurati che PROD/Preview/Dev puntino allo stesso DB se vuoi vedere gli stessi dati',
+    now: Date.now(),
+  });
 }
