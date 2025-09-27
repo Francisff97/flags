@@ -9,28 +9,16 @@ export async function kvGet(key: string): Promise<string | null> {
     cache: 'no-store',
   });
   if (!res.ok) return null;
-
-  const data = await res.json(); // Upstash: { result: ... } (string o object)
-
-  if (data && typeof data.result !== 'undefined') {
-    // caso standard (string) oppure “pulito” (object/array)
-    return typeof data.result === 'string'
-      ? data.result
-      : JSON.stringify(data.result);
-  }
-
-  // fallback bizzarri
-  if (typeof data?.value === 'string') return data.value;
-  if (typeof data === 'string') return data;
-
-  return null;
+  const data = await res.json(); // Upstash: { result: string|null }
+  return typeof data?.result === 'string' ? data.result : null;
 }
 
-// — normalizza per evitare doppi stringify/escape —
+// Normalizza: salva SEMPRE un singolo JSON.stringify “pulito”
 function normalize(value: any): string {
   if (typeof value === 'string') {
+    // prova a sbucciare eventuale JSON stringato 1-2 volte
     let v: any = value;
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 2; i++) {
       try {
         const parsed = JSON.parse(v);
         if (typeof parsed === 'string') { v = parsed; continue; }
@@ -64,4 +52,16 @@ export async function kvDel(key: string): Promise<void> {
     method: 'POST',
     headers: { Authorization: `Bearer ${TOKEN}` },
   });
+}
+
+// Parse “tollerante”: se il primo parse restituisce una stringa JSON, riprova una volta
+export function kvParseJSON(raw: string | null): any | null {
+  if (!raw) return null;
+  try {
+    const once = JSON.parse(raw);
+    if (typeof once === 'string') {
+      try { return JSON.parse(once); } catch { return once; }
+    }
+    return once;
+  } catch { return null; }
 }
