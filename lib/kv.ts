@@ -9,12 +9,20 @@ export async function kvGet(key: string): Promise<string | null> {
     cache: 'no-store',
   });
   if (!res.ok) return null;
-  const data = await res.json();
-  // Upstash standard: { result: "<string>" }
-  if (typeof data?.result === 'string') return data.result;
-  // fallback bizzarri: { value: "<string>" } o direttamente una stringa
-  if (typeof data?.value  === 'string') return data.value;
+
+  const data = await res.json(); // Upstash: { result: ... } (string o object)
+
+  if (data && typeof data.result !== 'undefined') {
+    // caso standard (string) oppure “pulito” (object/array)
+    return typeof data.result === 'string'
+      ? data.result
+      : JSON.stringify(data.result);
+  }
+
+  // fallback bizzarri
+  if (typeof data?.value === 'string') return data.value;
   if (typeof data === 'string') return data;
+
   return null;
 }
 
