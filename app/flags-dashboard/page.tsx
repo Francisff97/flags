@@ -237,15 +237,15 @@ export default async function FlagsDashboard() {
 
   return (
     <>
-      <div className="fd-card">
+      <div className="fd-card ">
         <h1>Flags Dashboard</h1>
-        <p className="fd-sub">Manage feature flags per installation.</p>
+        <p className="fd-sub">Gestione add-ons installazione Base Forge - Base Builders platform</p>
 
-        <form action={saveAction}>
+        <form action={saveAction} className='flex flex-col gap-4'>
           <label className="fd-label">
-            Installation (slug)
+            Installazione (slug)
             <select name="slug" defaultValue={defaultSlug} className="fd-select">
-              <option value="">(no installations yet)</option>
+              <option value="">(non ci sono ancora installazioni)</option>
               {slugs.map((s) => (
                 <option key={s} value={s}>{s}</option>
               ))}
