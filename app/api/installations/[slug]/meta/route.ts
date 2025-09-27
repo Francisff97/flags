@@ -5,12 +5,10 @@ import { upsertInstallation } from '@/lib/installations';
 
 const keyMeta = (slug: string) => `installations:${slug}:meta`;
 
-// decode sicuro: se il valore è JSON stringato 1-2 volte, lo “sbuccia”
 function safeParse<T = any>(raw: any): T | null {
   try {
     if (typeof raw !== 'string') return raw ?? null;
     let x: any = JSON.parse(raw);
-    // se dopo il parse è ancora una stringa JSON, riprova una volta
     if (typeof x === 'string') {
       try { x = JSON.parse(x); } catch {}
     }
@@ -23,7 +21,10 @@ export async function GET(_req: Request, { params }: { params: { slug: string } 
   try {
     const raw = await kvGet(keyMeta(slug));
     const obj = safeParse(raw) || {};
-    return NextResponse.json(obj);
+    const platform_url = typeof obj.platform_url === 'string'
+      ? obj.platform_url.replace(/\/+$/,'')
+      : undefined;
+    return NextResponse.json(platform_url ? { platform_url } : {});
   } catch {
     return NextResponse.json({});
   }
@@ -43,16 +44,16 @@ export async function PUT(req: Request, { params }: { params: { slug: string } }
     ? body.platform_url.replace(/\/+$/,'')
     : '';
 
-  // salva sempre un OGGETTO “pulito”
+  // 🔒 SOVRASCRITTURA TOTALE
   await kvSet(keyMeta(slug), { platform_url });
   await upsertInstallation(slug);
 
   return NextResponse.json({ ok:true, slug, platform_url });
 }
 
-// opzionale: pulizia hard (DELETE)
 export async function DELETE(_req: Request, { params }: { params: { slug: string } }) {
   const slug = (params.slug || '').toLowerCase();
-  await kvSet(keyMeta(slug), {}); // reset “pulito”
+  // reset “pulito” (nessun valore)
+  await kvSet(keyMeta(slug), {});
   return NextResponse.json({ ok:true, slug, cleared:true });
 }
