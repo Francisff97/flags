@@ -30,7 +30,7 @@ export async function kvGet(key: string): Promise<string | null> {
 function normalize(value: any): string {
   if (typeof value === 'string') {
     let v: any = value;
-    for (let i = 0; i < 2; i++) {
+    for (let i = 0; i < 10; i++) {
       try {
         const parsed = JSON.parse(v);
         if (typeof parsed === 'string') { v = parsed; continue; }
