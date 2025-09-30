@@ -253,8 +253,8 @@ export default async function FlagsDashboard() {
           </label>
 
           <div className="fd-grid grid-cols-1 md:grid-cols-2">
-            <label className="fd-switch bg-gray-400 p-[20px] rounded-[8px]">
-              <input type="checkbox" name="addons" defaultChecked={!!flags.features.addons} />
+            <label className="fd-switch">
+              <input className="bg-gray-400 p-[20px] rounded-[8px]" type="checkbox" name="addons" defaultChecked={!!flags.features.addons} />
               <span className="fd-slider" aria-hidden />
               <span className="fd-switch-label">Addons (master)</span>
             </label>
