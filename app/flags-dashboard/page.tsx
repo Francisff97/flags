@@ -278,7 +278,7 @@ export default async function FlagsDashboard({
       </div>
 
       {/* stile “Apple” switch, viola */}
-      <style jsx>{`
+      <style>{`
         .fd-card { border-radius: 16px; padding: 20px; border: 1px solid var(--line, #e5e7eb); background: var(--card, #fff); }
         .fd-sub { color: #6b7280; margin-top: 4px; }
         .fd-label { display: grid; gap: 6px; font-size: 14px; }
