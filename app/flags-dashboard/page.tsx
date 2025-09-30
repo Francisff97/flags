@@ -1,4 +1,4 @@
-Funzionante   // app/flags-dashboard/page.tsx
+  // app/flags-dashboard/page.tsx
 import { cookies, headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
