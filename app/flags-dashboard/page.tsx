@@ -23,50 +23,31 @@ function normalizeUrl(u?: string | null): string | undefined {
 }
 
 function projectOrigin(): string {
-  // Preferisci env su Vercel
   const envBase = process.env.FLAGS_BASE_URL?.replace(/\/+$/,'');
   if (envBase) return envBase;
-
-  // Fallback: proto + host dagli headers
   const h = headers();
   const proto = h.get('x-forwarded-proto') || 'https';
   const host  = h.get('host') || '';
   return `${proto}://${host}`;
 }
 
-/** Prova a fare JSON.parse.
- *  Se fallisce ma la stringa sembra doppiamente stringificata,
- *  riprova a togliere un layer e parse-are di nuovo.
- */
 function safeParse<T = any>(raw: unknown): T | null {
   try {
-    if (typeof raw === 'string') {
-      // primo tentativo
-      return JSON.parse(raw) as T;
-    }
-    if (raw && typeof raw === 'object') {
-      return raw as T;
-    }
+    if (typeof raw === 'string') return JSON.parse(raw) as T;
+    if (raw && typeof raw === 'object') return raw as T;
     return null;
   } catch {
-    // raw è una stringa con JSON escapato? (\"...\" e backslash a pioggia)
     if (typeof raw === 'string') {
       try {
-        const once = JSON.parse(raw);    // toglie 1 layer
-        if (typeof once === 'string') {
-          // era stringa di JSON → prova ancora
-          return JSON.parse(once) as T;
-        }
-        if (once && typeof once === 'object') {
-          return once as T;
-        }
-      } catch { /* ignore */ }
+        const once = JSON.parse(raw);
+        if (typeof once === 'string') return JSON.parse(once) as T;
+        if (once && typeof once === 'object') return once as T;
+      } catch {}
     }
     return null;
   }
 }
 
-/** Recupera JSON con tolleranza su content-type e blob di testo */
 async function fetchJsonTolerant(url: string, init?: RequestInit): Promise<any> {
   const res = await fetch(url, { cache: 'no-store', ...init });
   const ct = res.headers.get('content-type') || '';
@@ -76,9 +57,8 @@ async function fetchJsonTolerant(url: string, init?: RequestInit): Promise<any> 
     throw new Error(`HTTP ${res.status}`);
   }
   if (ct.includes('application/json')) {
-    try { return JSON.parse(text); } catch { /* cade sotto */ }
+    try { return JSON.parse(text); } catch {}
   }
-  // tenta parse “tollerante” anche se non JSON
   const parsed = safeParse(text);
   return parsed ?? {};
 }
@@ -99,11 +79,17 @@ type Flags = {
 /* ============================
    Page
 ============================ */
-export default async function FlagsDashboard() {
+export default async function FlagsDashboard({
+  searchParams,
+}: {
+  searchParams?: { slug?: string };
+}) {
   requireAuth();
 
   const slugs = await listInstallations();
-  const defaultSlug = slugs[0] ?? '';
+
+  // ► usa ?slug=... se presente, altrimenti la prima installazione
+  const selectedSlug = (searchParams?.slug || slugs[0] || '').toLowerCase();
 
   // defaults visivi
   let flags: Flags = {
@@ -116,14 +102,13 @@ export default async function FlagsDashboard() {
     },
   };
 
-  // Carica flags correnti (tollerante a valori “escapati”)
+  // Carica flags correnti per lo slug selezionato
   try {
-    if (defaultSlug) {
-      const raw = await kvGet(`flags:${defaultSlug}`);
+    if (selectedSlug) {
+      const raw = await kvGet(`flags:${selectedSlug}`);
       if (raw) {
         const parsed = safeParse(raw);
         if (parsed?.features && typeof parsed.features === 'object') {
-          // prendi SOLO i campi noti per sicurezza
           flags = {
             features: {
               addons:              !!parsed.features.addons,
@@ -180,25 +165,23 @@ export default async function FlagsDashboard() {
 
       if (!putRes.ok) {
         console.error('saveAction error (PUT flags):', putRes.status, await putRes.text());
-        revalidatePath('/flags-dashboard');
+        revalidatePath('/flags-dashboard?slug=' + encodeURIComponent(slug));
         return;
       }
     } catch (e: any) {
       console.error('saveAction fetch PUT failed:', e?.message || e);
-      revalidatePath('/flags-dashboard');
+      revalidatePath('/flags-dashboard?slug=' + encodeURIComponent(slug));
       return;
     }
 
-    // 2) Leggi meta e recupera platform_url (tollerante agli “escape”)
+    // 2) Leggi meta e recupera platform_url
     let platformUrl: string | undefined;
     try {
       const meta = await fetchJsonTolerant(`${base}/api/installations/${slug}/meta`);
-      // meta può essere: { platform_url: "..." } oppure stringa-JSON annidata
       const maybe = safeParse<any>(meta) ?? meta;
       const rawUrl =
         typeof maybe === 'string' ? (safeParse<any>(maybe)?.platform_url) :
         maybe?.platform_url;
-
       platformUrl = normalizeUrl(rawUrl);
     } catch (e: any) {
       console.warn('saveAction meta read failed:', e?.message || e);
@@ -208,7 +191,6 @@ export default async function FlagsDashboard() {
     if (platformUrl) {
       const body2 = JSON.stringify({ slug });
       const sig2  = signPayload(body2);
-
       try {
         const refreshRes = await fetch(`${platformUrl}/api/flags/refresh`, {
           method: 'POST',
@@ -221,7 +203,6 @@ export default async function FlagsDashboard() {
           cache: 'no-store',
           body: body2,
         });
-
         if (!refreshRes.ok) {
           console.warn('platform refresh not ok:', refreshRes.status, await refreshRes.text());
         }
@@ -232,61 +213,100 @@ export default async function FlagsDashboard() {
       console.warn('No platform_url in meta for', slug);
     }
 
-    revalidatePath('/flags-dashboard');
+    // torna sulla stessa installazione
+    revalidatePath('/flags-dashboard?slug=' + encodeURIComponent(slug));
   }
 
   return (
     <>
-      <div className="fd-card ">
+      {/* Mini form GET per scegliere lo slug e ricaricare la pagina con i flag correnti */}
+      <form method="GET" action="/flags-dashboard" className="mb-4 flex items-end gap-3">
+        <label className="fd-label">
+          Installazione (slug)
+          <select name="slug" defaultValue={selectedSlug} className="fd-select">
+            <option value="">(non ci sono ancora installazioni)</option>
+            {slugs.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+        </label>
+        <button className="fd-btn" type="submit">Carica</button>
+      </form>
+
+      <div className="fd-card">
         <h1>Flags Dashboard</h1>
         <p className="fd-sub">Gestione add-ons installazione Base Forge - Base Builders platform</p>
 
-        <form action={saveAction} className='flex flex-col gap-4'>
-          <label className="fd-label">
-            Installazione (slug)
-            <select name="slug" defaultValue={defaultSlug} className="fd-select">
-              <option value="">(non ci sono ancora installazioni)</option>
-              {slugs.map((s) => (
-                <option key={s} value={s}>{s}</option>
-              ))}
-            </select>
-          </label>
+        {/* Form SAVE (usa lo slug selezionato) */}
+        <form action={saveAction} className="flex flex-col gap-4">
+          <input type="hidden" name="slug" value={selectedSlug} />
 
           <div className="fd-grid">
-            <label className="fd-switch">
+            <label className="ios-switch">
               <input type="checkbox" name="addons" defaultChecked={!!flags.features.addons} />
-              <span className="fd-slider" aria-hidden />
-              <span className="fd-switch-label">Addons (master)</span>
+              <span className="ios-slider" aria-hidden />
+              <span className="ios-label">Addons (master)</span>
             </label>
 
-            <label className="fd-switch">
+            <label className="ios-switch">
               <input type="checkbox" name="email_templates" defaultChecked={!!flags.features.email_templates} />
-              <span className="fd-slider" aria-hidden />
-              <span className="fd-switch-label">Email templates</span>
+              <span className="ios-slider" aria-hidden />
+              <span className="ios-label">Email templates</span>
             </label>
 
-            <label className="fd-switch">
+            <label className="ios-switch">
               <input type="checkbox" name="discord_integration" defaultChecked={!!flags.features.discord_integration} />
-              <span className="fd-slider" aria-hidden />
-              <span className="fd-switch-label">Discord integration</span>
+              <span className="ios-slider" aria-hidden />
+              <span className="ios-label">Discord integration</span>
             </label>
 
-            <label className="fd-switch">
+            <label className="ios-switch">
               <input type="checkbox" name="tutorials" defaultChecked={!!flags.features.tutorials} />
-              <span className="fd-slider" aria-hidden />
-              <span className="fd-switch-label">Tutorials</span>
+              <span className="ios-slider" aria-hidden />
+              <span className="ios-label">Tutorials</span>
             </label>
 
-            <label className="fd-switch">
+            <label className="ios-switch">
               <input type="checkbox" name="announcements" defaultChecked={!!flags.features.announcements} />
-              <span className="fd-slider" aria-hidden />
-              <span className="fd-switch-label">Announcements</span>
+              <span className="ios-slider" aria-hidden />
+              <span className="ios-label">Announcements</span>
             </label>
           </div>
 
           <button className="fd-btn" type="submit">Save</button>
         </form>
       </div>
+
+      {/* stile “Apple” switch, viola */}
+      <style>{`
+        .fd-card { border-radius: 16px; padding: 20px; border: 1px solid var(--line, #e5e7eb); background: var(--card, #fff); }
+        .fd-sub { color: #6b7280; margin-top: 4px; }
+        .fd-label { display: grid; gap: 6px; font-size: 14px; }
+        .fd-select {
+          appearance: none; padding: 10px 12px; border-radius: 10px; border: 1px solid #e5e7eb;
+          background: #fff; min-width: 260px;
+        }
+        .fd-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
+        .fd-btn {
+          background: #7c3aed; color: white; padding: 10px 14px; border-radius: 10px; font-weight: 600;
+        }
+        /* iOS-like switch */
+        .ios-switch {
+          position: relative; display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 10px;
+          padding: 12px; border: 1px solid #e5e7eb; border-radius: 14px; background: #fff;
+        }
+        .ios-switch input { position: absolute; opacity: 0; pointer-events: none; }
+        .ios-slider {
+          width: 52px; height: 32px; border-radius: 999px; background: #e5e7eb; position: relative; transition: background .2s ease;
+        }
+        .ios-slider::after {
+          content: ""; position: absolute; top: 3px; left: 3px; width: 26px; height: 26px; border-radius: 50%;
+          background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.15); transition: transform .2s ease;
+        }
+        .ios-switch input:checked + .ios-slider { background: #7c3aed; }
+        .ios-switch input:checked + .ios-slider::after { transform: translateX(20px); }
+        .ios-label { font-size: 14px; font-weight: 500; color: #111827; }
+      `}</style>
     </>
   );
 }
