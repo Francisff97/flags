@@ -1,3 +1,16 @@
+// app/flags-dashboard/page.tsx
+import { cookies, headers } from 'next/headers';
+import { redirect } from 'next/navigation';
+import { revalidatePath } from 'next/cache';
+import { listInstallations } from '@/lib/installations';
+import { kvGet } from '@/lib/kv';
+import { signPayload } from '@/lib/sign';
+
+export const dynamic = 'force-dynamic';
+
+/* ============================
+   Helpers – hardening
+============================ */
 function requireAuth() {
   const jar = cookies();
   const ok = jar.get('fdash')?.value === '1';
