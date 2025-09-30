@@ -235,7 +235,7 @@ export default async function FlagsDashboard({
   return (
     <>
       {/* Mini form GET per scegliere lo slug e ricaricare la pagina con i flag correnti */}
-      <form method="GET" action="/flags-dashboard" className="mb-4 flex items-end gap-3">
+      <form method="GET" action="/flags-dashboard" className="mb-4 flex items-end gap-3" style={{margonTop:50px;}}>
         <label className="fd-label">
           Installazione (slug)
           <select name="slug" defaultValue={selectedSlug} className="fd-select">
