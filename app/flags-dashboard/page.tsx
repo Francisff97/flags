@@ -1,16 +1,3 @@
-// app/flags-dashboard/page.tsx
-import { cookies, headers } from 'next/headers';
-import { redirect } from 'next/navigation';
-import { revalidatePath } from 'next/cache';
-import { listInstallations } from '@/lib/installations';
-import { kvGet } from '@/lib/kv';
-import { signPayload } from '@/lib/sign';
-
-export const dynamic = 'force-dynamic';
-
-/* ============================
-   Helpers – hardening
-============================ */
 function requireAuth() {
   const jar = cookies();
   const ok = jar.get('fdash')?.value === '1';
@@ -23,31 +10,50 @@ function normalizeUrl(u?: string | null): string | undefined {
 }
 
 function projectOrigin(): string {
+  // Preferisci env su Vercel
   const envBase = process.env.FLAGS_BASE_URL?.replace(/\/+$/,'');
   if (envBase) return envBase;
+
+  // Fallback: proto + host dagli headers
   const h = headers();
   const proto = h.get('x-forwarded-proto') || 'https';
   const host  = h.get('host') || '';
   return `${proto}://${host}`;
 }
 
+/** Prova a fare JSON.parse.
+ *  Se fallisce ma la stringa sembra doppiamente stringificata,
+ *  riprova a togliere un layer e parse-are di nuovo.
+ */
 function safeParse<T = any>(raw: unknown): T | null {
   try {
-    if (typeof raw === 'string') return JSON.parse(raw) as T;
-    if (raw && typeof raw === 'object') return raw as T;
+    if (typeof raw === 'string') {
+      // primo tentativo
+      return JSON.parse(raw) as T;
+    }
+    if (raw && typeof raw === 'object') {
+      return raw as T;
+    }
     return null;
   } catch {
+    // raw è una stringa con JSON escapato? (\"...\" e backslash a pioggia)
     if (typeof raw === 'string') {
       try {
-        const once = JSON.parse(raw);
-        if (typeof once === 'string') return JSON.parse(once) as T;
-        if (once && typeof once === 'object') return once as T;
-      } catch {}
+        const once = JSON.parse(raw);    // toglie 1 layer
+        if (typeof once === 'string') {
+          // era stringa di JSON → prova ancora
+          return JSON.parse(once) as T;
+        }
+        if (once && typeof once === 'object') {
+          return once as T;
+        }
+      } catch { /* ignore */ }
     }
     return null;
   }
 }
 
+/** Recupera JSON con tolleranza su content-type e blob di testo */
 async function fetchJsonTolerant(url: string, init?: RequestInit): Promise<any> {
   const res = await fetch(url, { cache: 'no-store', ...init });
   const ct = res.headers.get('content-type') || '';
@@ -57,8 +63,9 @@ async function fetchJsonTolerant(url: string, init?: RequestInit): Promise<any> 
     throw new Error(`HTTP ${res.status}`);
   }
   if (ct.includes('application/json')) {
-    try { return JSON.parse(text); } catch {}
+    try { return JSON.parse(text); } catch { /* cade sotto */ }
   }
+  // tenta parse “tollerante” anche se non JSON
   const parsed = safeParse(text);
   return parsed ?? {};
 }
@@ -79,17 +86,11 @@ type Flags = {
 /* ============================
    Page
 ============================ */
-export default async function FlagsDashboard({
-  searchParams,
-}: {
-  searchParams?: { slug?: string };
-}) {
+export default async function FlagsDashboard() {
   requireAuth();
 
   const slugs = await listInstallations();
-
-  // ► usa ?slug=... se presente, altrimenti la prima installazione
-  const selectedSlug = (searchParams?.slug || slugs[0] || '').toLowerCase();
+  const defaultSlug = slugs[0] ?? '';
 
   // defaults visivi
   let flags: Flags = {
@@ -102,13 +103,14 @@ export default async function FlagsDashboard({
     },
   };
 
-  // Carica flags correnti per lo slug selezionato
+  // Carica flags correnti (tollerante a valori “escapati”)
   try {
-    if (selectedSlug) {
-      const raw = await kvGet(`flags:${selectedSlug}`);
+    if (defaultSlug) {
+      const raw = await kvGet(`flags:${defaultSlug}`);
       if (raw) {
         const parsed = safeParse(raw);
         if (parsed?.features && typeof parsed.features === 'object') {
+          // prendi SOLO i campi noti per sicurezza
           flags = {
             features: {
               addons:              !!parsed.features.addons,
@@ -165,23 +167,25 @@ export default async function FlagsDashboard({
 
       if (!putRes.ok) {
         console.error('saveAction error (PUT flags):', putRes.status, await putRes.text());
-        revalidatePath('/flags-dashboard?slug=' + encodeURIComponent(slug));
+        revalidatePath('/flags-dashboard');
         return;
       }
     } catch (e: any) {
       console.error('saveAction fetch PUT failed:', e?.message || e);
-      revalidatePath('/flags-dashboard?slug=' + encodeURIComponent(slug));
+      revalidatePath('/flags-dashboard');
       return;
     }
 
-    // 2) Leggi meta e recupera platform_url
+    // 2) Leggi meta e recupera platform_url (tollerante agli “escape”)
     let platformUrl: string | undefined;
     try {
       const meta = await fetchJsonTolerant(`${base}/api/installations/${slug}/meta`);
+      // meta può essere: { platform_url: "..." } oppure stringa-JSON annidata
       const maybe = safeParse<any>(meta) ?? meta;
       const rawUrl =
         typeof maybe === 'string' ? (safeParse<any>(maybe)?.platform_url) :
         maybe?.platform_url;
+
       platformUrl = normalizeUrl(rawUrl);
     } catch (e: any) {
       console.warn('saveAction meta read failed:', e?.message || e);
@@ -191,6 +195,7 @@ export default async function FlagsDashboard({
     if (platformUrl) {
       const body2 = JSON.stringify({ slug });
       const sig2  = signPayload(body2);
+
       try {
         const refreshRes = await fetch(`${platformUrl}/api/flags/refresh`, {
           method: 'POST',
@@ -203,6 +208,7 @@ export default async function FlagsDashboard({
           cache: 'no-store',
           body: body2,
         });
+
         if (!refreshRes.ok) {
           console.warn('platform refresh not ok:', refreshRes.status, await refreshRes.text());
         }
@@ -213,8 +219,7 @@ export default async function FlagsDashboard({
       console.warn('No platform_url in meta for', slug);
     }
 
-    // torna sulla stessa installazione
-    revalidatePath('/flags-dashboard?slug=' + encodeURIComponent(slug));
+    revalidatePath('/flags-dashboard');
   }
 
   return (
