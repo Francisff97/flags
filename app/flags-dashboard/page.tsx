@@ -1,4 +1,4 @@
-// app/flags-dashboard/page.tsx
+Funzionante   // app/flags-dashboard/page.tsx
 import { cookies, headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
@@ -237,94 +237,57 @@ export default async function FlagsDashboard() {
 
   return (
     <>
-      {/* Mini form GET per scegliere lo slug e ricaricare la pagina con i flag correnti */}
-      <form method="GET" action="/flags-dashboard" className="mb-4 flex items-end gap-3">
-        <label className="fd-label">
-          Installazione (slug)
-          <select name="slug" defaultValue={selectedSlug} className="fd-select">
-            <option value="">(non ci sono ancora installazioni)</option>
-            {slugs.map((s) => (
-              <option key={s} value={s}>{s}</option>
-            ))}
-          </select>
-        </label>
-        <button className="fd-btn" type="submit">Carica</button>
-      </form>
-
-      <div className="fd-card">
+      <div className="fd-card ">
         <h1>Flags Dashboard</h1>
         <p className="fd-sub">Gestione add-ons installazione Base Forge - Base Builders platform</p>
 
-        {/* Form SAVE (usa lo slug selezionato) */}
-        <form action={saveAction} className="flex flex-col gap-4">
-          <input type="hidden" name="slug" value={selectedSlug} />
+        <form action={saveAction} className='flex flex-col gap-4'>
+          <label className="fd-label">
+            Installazione (slug)
+            <select name="slug" defaultValue={defaultSlug} className="fd-select">
+              <option value="">(non ci sono ancora installazioni)</option>
+              {slugs.map((s) => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+          </label>
 
           <div className="fd-grid">
-            <label className="ios-switch">
+            <label className="fd-switch">
               <input type="checkbox" name="addons" defaultChecked={!!flags.features.addons} />
-              <span className="ios-slider" aria-hidden />
-              <span className="ios-label">Addons (master)</span>
+              <span className="fd-slider" aria-hidden />
+              <span className="fd-switch-label">Addons (master)</span>
             </label>
 
-            <label className="ios-switch">
+            <label className="fd-switch">
               <input type="checkbox" name="email_templates" defaultChecked={!!flags.features.email_templates} />
-              <span className="ios-slider" aria-hidden />
-              <span className="ios-label">Email templates</span>
+              <span className="fd-slider" aria-hidden />
+              <span className="fd-switch-label">Email templates</span>
             </label>
 
-            <label className="ios-switch">
+            <label className="fd-switch">
               <input type="checkbox" name="discord_integration" defaultChecked={!!flags.features.discord_integration} />
-              <span className="ios-slider" aria-hidden />
-              <span className="ios-label">Discord integration</span>
+              <span className="fd-slider" aria-hidden />
+              <span className="fd-switch-label">Discord integration</span>
             </label>
 
-            <label className="ios-switch">
+            <label className="fd-switch">
               <input type="checkbox" name="tutorials" defaultChecked={!!flags.features.tutorials} />
-              <span className="ios-slider" aria-hidden />
-              <span className="ios-label">Tutorials</span>
+              <span className="fd-slider" aria-hidden />
+              <span className="fd-switch-label">Tutorials</span>
             </label>
 
-            <label className="ios-switch">
+            <label className="fd-switch">
               <input type="checkbox" name="announcements" defaultChecked={!!flags.features.announcements} />
-              <span className="ios-slider" aria-hidden />
-              <span className="ios-label">Announcements</span>
+              <span className="fd-slider" aria-hidden />
+              <span className="fd-switch-label">Announcements</span>
             </label>
           </div>
 
           <button className="fd-btn" type="submit">Save</button>
         </form>
       </div>
-
-      {/* stile “Apple” switch, viola */}
-      <style>{`
-        .fd-card { border-radius: 16px; padding: 20px; border: 1px solid var(--line, #e5e7eb); background: var(--card, #fff); }
-        .fd-sub { color: #6b7280; margin-top: 4px; }
-        .fd-label { display: grid; gap: 6px; font-size: 14px; }
-        .fd-select {
-          appearance: none; padding: 10px 12px; border-radius: 10px; border: 1px solid #e5e7eb;
-          background: #fff; min-width: 260px;
-        }
-        .fd-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
-        .fd-btn {
-          background: #7c3aed; color: white; padding: 10px 14px; border-radius: 10px; font-weight: 600;
-        }
-        /* iOS-like switch */
-        .ios-switch {
-          position: relative; display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 10px;
-          padding: 12px; border: 1px solid #e5e7eb; border-radius: 14px; background: #fff;
-        }
-        .ios-switch input { position: absolute; opacity: 0; pointer-events: none; }
-        .ios-slider {
-          width: 52px; height: 32px; border-radius: 999px; background: #e5e7eb; position: relative; transition: background .2s ease;
-        }
-        .ios-slider::after {
-          content: ""; position: absolute; top: 3px; left: 3px; width: 26px; height: 26px; border-radius: 50%;
-          background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.15); transition: transform .2s ease;
-        }
-        .ios-switch input:checked + .ios-slider { background: #7c3aed; }
-        .ios-switch input:checked + .ios-slider::after { transform: translateX(20px); }
-        .ios-label { font-size: 14px; font-weight: 500; color: #111827; }
-      `}</style>
     </>
   );
 }
+
