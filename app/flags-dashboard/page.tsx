@@ -104,26 +104,41 @@ export default async function FlagsDashboard({
 
   // Carica flags correnti per lo slug selezionato
   try {
-    if (selectedSlug) {
-      const raw = await kvGet(`flags:${selectedSlug}`);
-      if (raw) {
-        const parsed = safeParse(raw);
-        if (parsed?.features && typeof parsed.features === 'object') {
-          flags = {
-            features: {
-              addons:              !!parsed.features.addons,
-              email_templates:     !!parsed.features.email_templates,
-              discord_integration: !!parsed.features.discord_integration,
-              tutorials:           !!parsed.features.tutorials,
-              announcements:       !!parsed.features.announcements,
-            },
-          };
-        }
+  if (selectedSlug) {
+    const raw = await kvGet(`flags:${selectedSlug}`);
+    if (raw) {
+      // 1° parse
+      let obj: any = safeParse<any>(raw);
+
+      // Se è del tipo { value: "..." } → sbuccia value
+      if (obj && typeof obj === 'object' && 'value' in obj) {
+        const unwrapped = typeof obj.value === 'string' ? safeParse<any>(obj.value) : obj.value;
+        if (unwrapped) obj = unwrapped;
+      }
+
+      // Se dopo è ancora una stringa JSON → riprova
+      if (typeof obj === 'string') {
+        const again = safeParse<any>(obj);
+        if (again) obj = again;
+      }
+
+      const f = obj?.features;
+      if (f && typeof f === 'object') {
+        flags = {
+          features: {
+            addons:              !!f.addons,
+            email_templates:     !!f.email_templates,
+            discord_integration: !!f.discord_integration,
+            tutorials:           !!f.tutorials,
+            announcements:       !!f.announcements,
+          },
+        };
       }
     }
-  } catch (e: any) {
-    console.warn('flags prefetch warning:', e?.message || e);
   }
+} catch (e: any) {
+  console.warn('flags prefetch warning:', e?.message || e);
+}
 
   async function saveAction(formData: FormData) {
     'use server';
