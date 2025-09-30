@@ -235,7 +235,7 @@ export default async function FlagsDashboard({
   return (
     <>
       {/* Mini form GET per scegliere lo slug e ricaricare la pagina con i flag correnti */}
-      <form method="GET" action="/flags-dashboard" className="mb-4 flex items-end gap-3 lg:w-[900px] lg:m-auto">
+      <form method="GET" action="/flags-dashboard" className="mb-4 flex items-end gap-3">
         <label className="fd-label">
           Installazione (slug)
           <select name="slug" defaultValue={selectedSlug} className="fd-select">
@@ -294,7 +294,7 @@ export default async function FlagsDashboard({
 
       {/* stile “Apple” switch, viola */}
       <style>{`
-        .fd-card { border-radius: 16px; padding: 20px; border: 1px solid var(--line, #e5e7eb); background: var(--card, #fff); }
+        .fd-card { border-radius: 16px; padding: 20px; border: 1px solid var(--line, #e5e7eb); background: var(--card, #fff); margin-top:50px;}
         .fd-sub { color: #6b7280; margin-top: 4px; }
         .fd-label { display: grid; gap: 6px; font-size: 14px; }
         .fd-select {
