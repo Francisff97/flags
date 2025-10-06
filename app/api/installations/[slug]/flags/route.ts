@@ -6,100 +6,72 @@ export const runtime = 'nodejs'; // se non c’è già
 import crypto from 'crypto';
 
 function resolveRefreshUrl(): string | null {
-  const url = process.env.PLATFORM_REFRESH_URL
-    || (process.env.PLATFORM_URL ? `${process.env.PLATFORM_URL.replace(/\/+$/, '')}/api/flags/refresh` : '')
-    || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL.replace(/\/+$/, '')}/api/flags/refresh` : '');
-  return url || null;
+  // 1) prendi refresh URL se presente, altrimenti costruiscila da PLATFORM_URL/VERCEL_URL
+  let url =
+    (process.env.PLATFORM_REFRESH_URL || '').trim() ||
+    (process.env.PLATFORM_URL ? `${process.env.PLATFORM_URL.replace(/\/+$/, '')}/api/flags/refresh` : '') ||
+    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL.replace(/\/+$/, '')}/api/flags/refresh` : '');
+
+  if (!url) return null;
+
+  // 2) normalizza: sempre HTTPS
+  url = url.replace(/^http:\/\//i, 'https://');
+
+  // 3) normalizza path
+  url = url.replace(/\/+$/, '');
+  if (!/\/api\/flags\/refresh$/.test(url)) url += '/api/flags/refresh';
+
+  return url;
 }
 
-// --- helper: prende platform_url da /api/installations/:slug/meta ---
-async function fetchPlatformUrlFromMeta(slug: string): Promise<string | null> {
-  // base del server flags (questa app)
-  const selfBase =
-    (process.env.FLAGS_BASE_URL ?? '') ||
-    (process.env.PLATFORM_URL ?? '') ||                                // se l’hai
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '');
-
-  if (!selfBase) {
-    console.warn('[notify->platform] no self base url to reach /meta');
-    return null;
-  }
-
-  const metaUrl = `${selfBase.replace(/\/+$/, '')}/api/installations/${encodeURIComponent(slug)}/meta`;
-
-  try {
-    const r = await fetch(metaUrl, { method: 'GET', headers: { 'Accept': 'application/json' } });
-    if (!r.ok) {
-      console.warn('[notify->platform] meta fetch not ok', { slug, status: r.status });
-      return null;
-    }
-    const j = await r.json();
-    const platformUrl = (j?.platform_url ?? '').toString().trim();
-    return platformUrl || null;
-  } catch (e) {
-    console.warn('[notify->platform] meta fetch error', String(e));
-    return null;
-  }
-}
-
-// --- prende il secret dall'env (più nomi possibili) ---
 function getSigningSecret(): string {
   return (
-    (process.env.FLAGS_SIGNING_SECRET ?? '').trim() ||
-    (process.env.SIGNING_SECRET ?? '').trim() ||
-    (process.env.FLAGS_HMAC_SECRET ?? '').trim() ||
-    (process.env.FLAGS_SHARED_SECRET ?? '').trim()
+    (process.env.SIGNING_SECRET || '').trim() ||           // <— Vercel: usa questa
+    (process.env.FLAGS_SIGNING_SECRET || '').trim() ||     // fallback
+    (process.env.FLAGS_HMAC_SECRET || '').trim() ||
+    (process.env.FLAGS_SHARED_SECRET || '').trim()
   );
 }
 
-// --- SOSTITUISCI LA TUA notifyPlatformRefresh CON QUESTA ---
-async function notifyPlatformRefresh(slug: string): Promise<void> {
-  const platformBase = await fetchPlatformUrlFromMeta(slug);
+export async function notifyPlatformRefresh(slug: string): Promise<void> {
+  const url = resolveRefreshUrl();
   const secret = getSigningSecret();
 
-  if (!platformBase || !secret) {
-    console.warn('[notify->platform] missing data', {
-      hasPlatform: !!platformBase,
-      secretLen: secret.length,
+  if (!url || !secret) {
+    console.warn('[notify->platform] missing url/secret', {
+      hasUrl: !!url, secretLen: secret?.length || 0
     });
     return;
   }
 
-  const url = `${platformBase.replace(/\/+$/, '')}/api/flags/refresh`;
-  const body = JSON.stringify({ slug });                   // nessuno spazio extra
+  const body = JSON.stringify({ slug });
   const sig  = crypto.createHmac('sha256', secret).update(body, 'utf8').digest('hex');
 
-  // log diagnostico (lascia per ora)
-  console.warn('[notify->platform]', {
-    url,
-    slug,
-    bodyLen: body.length,
-    sigPreview: sig.slice(0, 12),
-    secretLen: secret.length,
+  // log diagnostico
+  console.warn('[notify->platform] >>', {
+    url, slug, bodyLen: body.length, sigPreview: sig.slice(0, 12), secretLen: secret.length
   });
 
-  await fetch(url, {
-    method: 'POST',
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-      'X-Signature': sig,
-      // opzionale: aiuta il debug lato Laravel
-      'Content-Length': Buffer.byteLength(body).toString(),
-      'User-Agent': 'flags-server/notify',
-    },
-    body,
-    // IMPORTANT: evita re-try automatici
-    cache: 'no-store',
-  }).then(async r => {
-    if (!r.ok) {
-      let payload: any = null;
-      try { payload = await r.text(); } catch {}
-      console.warn('platform refresh not ok:', r.status, payload);
-    }
-  }).catch(err => {
-    console.warn('platform refresh error:', String(err));
-  });
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      // non seguire redirect che spogliano body+headers
+      redirect: 'error',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        'X-Signature': sig,
+        // opzionale ma esplicito:
+        'Content-Length': Buffer.byteLength(body).toString(),
+      },
+      body,
+    });
+
+    const text = await res.text().catch(() => '');
+    console.warn('[notify->platform] <<', { status: res.status, ok: res.ok, preview: text.slice(0, 120) });
+  } catch (e:any) {
+    console.warn('[notify->platform] fetch error', { message: e?.message || String(e) });
+  }
 }
 
 type Features = {
