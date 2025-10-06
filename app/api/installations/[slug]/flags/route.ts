@@ -28,6 +28,7 @@ async function notifyPlatformRefresh(slug: string): Promise<void> {
 
   const body = JSON.stringify({ slug });
   const sig = crypto.createHmac('sha256', secret).update(body, 'utf8').digest('hex');
+  
 
   function getSigningSecret(): string {
   // prende il primo valorizzato tra questi (in ordine)
@@ -37,13 +38,6 @@ async function notifyPlatformRefresh(slug: string): Promise<void> {
     (process.env.FLAGS_SHARED_SECRET || '').trim()
   );
 }
-  console.warn('[notify->platform]', {
-  url, slug, bodyLen: body.length,
-  sigPreview: sig.slice(0, 12),
-  secretLen: (process.env.FLAGS_SIGNING_SECRET || process.env.FLAGS_HMAC_SECRET || process.env.FLAGS_SHARED_SECRET || '').trim().length,
-});
-
-
   // fire-and-forget: non attendiamo il risultato
   fetch(url, {
     method: 'POST',
@@ -54,6 +48,8 @@ async function notifyPlatformRefresh(slug: string): Promise<void> {
     },
     body,
   }).catch(() => {});
+  // LOG TEMPORANEO (rimuovi quando ok)
+  console.warn('[notify->platform]', { url, slug, bodyLen: body.length, sigPreview: sig.slice(0, 12) });
 }
 
 type Features = {
