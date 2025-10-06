@@ -17,7 +17,7 @@ function getSigningSecret(): string {
   // prende il primo valorizzato tra questi (in ordine)
   return (
     (process.env.FLAGS_SIGNING_SECRET || '').trim() ||
-    (process.envSIGNING_SECRET || '').trim() ||
+    (process.env.SIGNING_SECRET || '').trim() ||
     (process.env.FLAGS_HMAC_SECRET || '').trim() ||
     (process.env.FLAGS_SHARED_SECRET || '').trim()
   );
