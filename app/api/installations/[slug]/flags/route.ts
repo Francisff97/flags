@@ -69,6 +69,17 @@ function normalizeBaseUrl(base: string): string {
 async function notifyPlatformRefresh(slug: string): Promise<void> {
   const platformBase = await fetchPlatformUrlFromMeta(slug);
   const secret = getSigningSecret();
+  // subito dopo: const secret = getSigningSecret();
+const secretHash = crypto.createHash('sha256').update(secret, 'utf8').digest('hex');
+const testBody   = JSON.stringify({ slug: 'dnln' }); // corpo di test identico
+const testHmac   = crypto.createHmac('sha256', secret).update(testBody, 'utf8').digest('hex');
+
+console.warn('[notify->platform][diag]', {
+  secretLen: secret.length,
+  secretSha256_12: secretHash.slice(0,12),
+  testBodyLen: testBody.length,
+  testHmac_12: testHmac.slice(0,12),
+});
 
   if (!platformBase || !secret) {
     console.warn('[notify->platform] missing data', {
