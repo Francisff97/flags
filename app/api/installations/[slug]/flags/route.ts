@@ -29,6 +29,7 @@ async function notifyPlatformRefresh(slug: string): Promise<void> {
       secretLen: (secret || '').length,
       envs: {
         FLAGS_SIGNING_SECRET: (process.env.FLAGS_SIGNING_SECRET || '').length,
+        SIGNING_SECRET: (process.env.SIGNING_SECRET || '').length,
         FLAGS_HMAC_SECRET:    (process.env.FLAGS_HMAC_SECRET    || '').length,
         FLAGS_SHARED_SECRET:  (process.env.FLAGS_SHARED_SECRET  || '').length,
       },
