@@ -1,48 +1,22 @@
+// app/api/installations/[slug]/flags/route.ts
 import { NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
 import { upsertInstallation } from '@/lib/installations';
 import { verifySignature } from '@/lib/sign';
-export const runtime = 'nodejs'; // se non c’è già
+import { headers } from 'next/headers';
 import crypto from 'crypto';
 
-function resolveRefreshUrl(): string | null {
-  const url = process.env.PLATFORM_REFRESH_URL
-    || (process.env.PLATFORM_URL ? `${process.env.PLATFORM_URL.replace(/\/+$/, '')}/api/flags/refresh` : '')
-    || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL.replace(/\/+$/, '')}/api/flags/refresh` : '');
-  return url || null;
+export const runtime = 'nodejs';
+
+// ————— helpers —————
+function normalizeBaseUrl(base: string): string {
+  let b = (base || '').trim();
+  if (!/^https?:\/\//i.test(b)) b = 'https://' + b;      // dominio nudo -> https
+  b = b.replace(/^http:\/\//i, 'https://');              // forza https
+  b = b.replace(/\/+$/, '');                             // no trailing slash
+  return b;
 }
 
-// --- helper: prende platform_url da /api/installations/:slug/meta ---
-async function fetchPlatformUrlFromMeta(slug: string): Promise<string | null> {
-  // base del server flags (questa app)
-  const selfBase =
-    (process.env.FLAGS_BASE_URL ?? '') ||
-    (process.env.PLATFORM_URL ?? '') ||
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '');
-
-  if (!selfBase) {
-    console.warn('[notify->platform] no self base url to reach /meta');
-    return null;
-  }
-
-  const metaUrl = `${selfBase.replace(/\/+$/, '')}/api/installations/${encodeURIComponent(slug)}/meta`;
-
-  try {
-    const r = await fetch(metaUrl, { method: 'GET', headers: { 'Accept': 'application/json' } });
-    if (!r.ok) {
-      console.warn('[notify->platform] meta fetch not ok', { slug, status: r.status });
-      return null;
-    }
-    const j = await r.json();
-    const platformUrl = (j?.platform_url ?? '').toString().trim();
-    return platformUrl || null;
-  } catch (e) {
-    console.warn('[notify->platform] meta fetch error', String(e));
-    return null;
-  }
-}
-
-// --- prende il secret dall'env (più nomi possibili) ---
 function getSigningSecret(): string {
   return (
     (process.env.FLAGS_SIGNING_SECRET ?? '').trim() ||
@@ -52,82 +26,102 @@ function getSigningSecret(): string {
   );
 }
 
-/* 👇 NUOVO: normalizza la base URL
-   - se manca lo schema, mette https://
-   - forza http -> https
-   - rimuove slash finali
-*/
-function normalizeBaseUrl(base: string): string {
-  let b = (base || '').trim();
-  if (!/^https?:\/\//i.test(b)) b = 'https://' + b;       // dominio nudo -> https
-  b = b.replace(/^http:\/\//i, 'https://');               // forza https
-  b = b.replace(/\/+$/, '');                              // no trailing slash
-  return b;
+/**
+ * Base URL del server flags corrente. Priorità:
+ * 1) header x-forwarded-proto/host (affidabile su Vercel)
+ * 2) FLAGS_BASE_URL
+ * 3) PLATFORM_URL
+ * 4) VERCEL_URL
+ */
+function getSelfBaseFromRequest(): string | null {
+  try {
+    const h = headers();
+    const proto = (h.get('x-forwarded-proto') || 'https').split(',')[0].trim();
+    const host  = (h.get('x-forwarded-host')  || h.get('host') || '').split(',')[0].trim();
+    if (host) return normalizeBaseUrl(`${proto}://${host}`);
+  } catch {}
+  const envBase =
+    (process.env.FLAGS_BASE_URL ?? '') ||
+    (process.env.PLATFORM_URL ?? '') ||
+    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '');
+  return envBase ? normalizeBaseUrl(envBase) : null;
 }
 
-// --- SOSTITUISCI LA TUA notifyPlatformRefresh CON QUESTA (stessa logica + https) ---
+// prende platform_url dall’endpoint meta dello stesso flags server
+async function fetchPlatformUrlFromMeta(slug: string): Promise<string | null> {
+  const selfBase = getSelfBaseFromRequest();
+  if (!selfBase) {
+    console.warn('[notify->platform] no self base url to reach /meta');
+    return null;
+  }
+  const metaUrl = `${selfBase}/api/installations/${encodeURIComponent(slug)}/meta`;
+  try {
+    const r = await fetch(metaUrl, { method: 'GET', headers: { Accept: 'application/json' }, cache: 'no-store' });
+    if (!r.ok) {
+      console.warn('[notify->platform] meta fetch not ok', { slug, status: r.status });
+      return null;
+    }
+    const j = await r.json();
+    const platformUrl = (j?.platform_url ?? '').toString().trim();
+    return platformUrl ? normalizeBaseUrl(platformUrl) : null;
+  } catch (e: any) {
+    console.warn('[notify->platform] meta fetch error', e?.message || String(e));
+    return null;
+  }
+}
+
 async function notifyPlatformRefresh(slug: string): Promise<void> {
   const platformBase = await fetchPlatformUrlFromMeta(slug);
   const secret = getSigningSecret();
-  // subito dopo: const secret = getSigningSecret();
-const secretHash = crypto.createHash('sha256').update(secret, 'utf8').digest('hex');
-const testBody   = JSON.stringify({ slug: 'dnln' }); // corpo di test identico
-const testHmac   = crypto.createHmac('sha256', secret).update(testBody, 'utf8').digest('hex');
 
-console.warn('[notify->platform][diag]', {
-  secretLen: secret.length,
-  secretSha256_12: secretHash.slice(0,12),
-  testBodyLen: testBody.length,
-  testHmac_12: testHmac.slice(0,12),
-});
+  // diag minimo (niente valori sensibili, solo lunghezze e preview)
+  const testBody = JSON.stringify({ slug });
+  const testHmac = secret ? crypto.createHmac('sha256', secret).update(testBody, 'utf8').digest('hex').slice(0, 12) : '';
+  console.warn('[notify->platform][diag]', {
+    hasPlatform: !!platformBase,
+    secretLen: secret.length,
+    bodyLen: testBody.length,
+    hmac12: testHmac,
+  });
 
-  if (!platformBase || !secret) {
-    console.warn('[notify->platform] missing data', {
-      hasPlatform: !!platformBase,
-      secretLen: secret.length,
-    });
-    return;
-  }
+  if (!platformBase || !secret) return;
 
-  // 👇 applico solo la normalizzazione http/https
-  const platformBaseNormalized = normalizeBaseUrl(platformBase);
-  const url = `${platformBaseNormalized}/api/flags/refresh`;
+  const url = `${platformBase}/api/flags/refresh`;
+  const sig = crypto.createHmac('sha256', secret).update(testBody, 'utf8').digest('hex');
 
-  const body = JSON.stringify({ slug }); // nessuno spazio extra
-  const sig  = crypto.createHmac('sha256', secret).update(body, 'utf8').digest('hex');
-
-  // log diagnostico (lascia per ora)
-  console.warn('[notify->platform]', {
+  console.warn('[notify->platform] >>', {
     url,
     slug,
-    bodyLen: body.length,
-    sigPreview: sig.slice(0, 12),
-    secretLen: secret.length,
+    sig12: sig.slice(0, 12),
   });
 
-  await fetch(url, {
-    method: 'POST',
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-      'X-Signature': sig,
-      // opzionale: aiuta il debug lato Laravel
-      'Content-Length': Buffer.byteLength(body).toString(),
-      'User-Agent': 'flags-server/notify',
-    },
-    body,
-    cache: 'no-store',
-  }).then(async r => {
-    if (!r.ok) {
-      let payload: any = null;
-      try { payload = await r.text(); } catch {}
-      console.warn('platform refresh not ok:', r.status, payload);
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      redirect: 'error',               // evitiamo redirect che spogliano body/headers
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        'X-Signature': sig,
+        'Content-Length': Buffer.byteLength(testBody).toString(),
+        'User-Agent': 'flags-server/notify',
+      },
+      body: testBody,
+      cache: 'no-store',
+    });
+
+    const preview = await res.text().catch(() => '');
+    if (!res.ok) {
+      console.warn('platform refresh not ok:', res.status, preview.slice(0, 200));
+    } else {
+      console.warn('platform refresh ok:', res.status, preview.slice(0, 200));
     }
-  }).catch(err => {
-    console.warn('platform refresh error:', String(err));
-  });
+  } catch (e: any) {
+    console.warn('[notify->platform] fetch error', e?.message || String(e));
+  }
 }
 
+// ————— tipi e chiavi —————
 type Features = {
   addons?: boolean;
   email_templates?: boolean;
@@ -142,7 +136,7 @@ type FlagsDoc = {
   updated_by?: string;
 };
 
-const keyFlags   = (slug: string) => `flags:${slug}`;
+const keyFlags = (slug: string) => `flags:${slug}`;
 const keyHistory = (slug: string) => `flags:${slug}:history`;
 const MAX_HISTORY = 50;
 
@@ -157,7 +151,7 @@ function safeParse<T = any>(raw: any): T | null {
   } catch { return null; }
 }
 
-// ---------- GET ----------
+// ————— GET —————
 export async function GET(_req: Request, { params }: { params: { slug: string } }) {
   const slug = (params.slug || '').toLowerCase();
   try {
@@ -169,18 +163,18 @@ export async function GET(_req: Request, { params }: { params: { slug: string } 
   }
 }
 
-// ---------- PUT (OVERWRITE) ----------
+// ————— PUT (overwrite totale) —————
 export async function PUT(req: Request, { params }: { params: { slug: string } }) {
   const slug = (params.slug || '').toLowerCase();
 
   const raw = await req.text();
   const sig = req.headers.get('x-signature') ?? '';
   if (!verifySignature(raw, sig)) {
-    return NextResponse.json({ ok:false, error:'invalid signature' }, { status:401 });
+    return NextResponse.json({ ok: false, error: 'invalid signature' }, { status: 401 });
   }
 
   const incoming = safeParse<Partial<FlagsDoc>>(raw) || {};
-  const incFeat  = (incoming as any)?.features ?? {};
+  const incFeat = (incoming as any)?.features ?? {};
 
   const nextFeat: Features = {
     addons:              !!incFeat.addons,
@@ -190,7 +184,6 @@ export async function PUT(req: Request, { params }: { params: { slug: string } }
     announcements:       !!incFeat.announcements,
   };
 
-  // 🔒 SOVRASCRITTURA TOTALE (nessun merge col “current”)
   const saved: FlagsDoc = {
     features: nextFeat,
     updated_at: Date.now(),
@@ -199,9 +192,11 @@ export async function PUT(req: Request, { params }: { params: { slug: string } }
 
   await kvSet(keyFlags(slug), saved);
   await upsertInstallation(slug);
-  notifyPlatformRefresh(params.slug);
 
-  // history compatta (manteniamo traccia)
+  // fire-and-forget (va bene non attendere)
+  notifyPlatformRefresh(slug).catch(() => {});
+
+  // history (compatta)
   try {
     const hPrev = await kvGet(keyHistory(slug));
     const arr: FlagsDoc[] = safeParse(hPrev) ?? [];
@@ -210,5 +205,5 @@ export async function PUT(req: Request, { params }: { params: { slug: string } }
     await kvSet(keyHistory(slug), arr);
   } catch {}
 
-  return NextResponse.json({ ok:true, slug, saved });
+  return NextResponse.json({ ok: true, slug, saved });
 }
