@@ -23,15 +23,32 @@ function getSigningSecret(): string {
 async function notifyPlatformRefresh(slug: string): Promise<void> {
   const url = resolveRefreshUrl();
   const secret = getSigningSecret();
-  if (!url || !secret) return;
+  if (!url || !secret) {
+    console.error('[notify->platform] missing url/secret', {
+      hasUrl: !!url,
+      secretLen: (secret || '').length,
+      envs: {
+        FLAGS_SIGNING_SECRET: (process.env.FLAGS_SIGNING_SECRET || '').length,
+        FLAGS_HMAC_SECRET:    (process.env.FLAGS_HMAC_SECRET    || '').length,
+        FLAGS_SHARED_SECRET:  (process.env.FLAGS_SHARED_SECRET  || '').length,
+      },
+    });
+    return;
+  }
 
   const body = JSON.stringify({ slug });
   const sig = crypto.createHmac('sha256', secret).update(body, 'utf8').digest('hex');
 
-  // LOG TEMPORANEO (rimuovi quando ok)
-  console.warn('[notify->platform]', { url, slug, bodyLen: body.length, sigPreview: sig.slice(0, 12) });
+  // LOG CHE SI VEDE SU VERCEL (Functions/Logs del deployment)
+  console.log('[notify->platform]', {
+    url,
+    slug,
+    bodyLen: body.length, // deve essere 15
+    sigPreview: sig.slice(0, 12),
+    secretLen: secret.length,
+  });
 
-  fetch(url, {
+  await fetch(url, {
     method: 'POST',
     headers: {
       Accept: 'application/json',
@@ -39,8 +56,9 @@ async function notifyPlatformRefresh(slug: string): Promise<void> {
       'X-Signature': sig,
     },
     body,
-  }).catch(() => {});
+  });
 }
+
 
 type Features = {
   addons?: boolean;
