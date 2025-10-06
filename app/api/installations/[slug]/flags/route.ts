@@ -2,6 +2,39 @@ import { NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
 import { upsertInstallation } from '@/lib/installations';
 import { verifySignature } from '@/lib/sign';
+export const runtime = 'nodejs'; // se non c’è già
+import crypto from 'crypto';
+
+function resolveRefreshUrl(): string | null {
+  const url = process.env.PLATFORM_REFRESH_URL
+    || (process.env.PLATFORM_URL ? `${process.env.PLATFORM_URL.replace(/\/+$/, '')}/api/flags/refresh` : '')
+    || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL.replace(/\/+$/, '')}/api/flags/refresh` : '');
+  return url || null;
+}
+
+function getSigningSecret(): string {
+  return (process.env.FLAGS_SIGNING_SECRET || '').trim();
+}
+
+async function notifyPlatformRefresh(slug: string): Promise<void> {
+  const url = resolveRefreshUrl();
+  const secret = getSigningSecret();
+  if (!url || !secret) return; // se manca qualcosa, non blocchiamo la risposta
+
+  const body = JSON.stringify({ slug });
+  const sig = crypto.createHmac('sha256', secret).update(body, 'utf8').digest('hex');
+
+  // fire-and-forget: non attendiamo il risultato
+  fetch(url, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      'X-Signature': sig,
+    },
+    body,
+  }).catch(() => {});
+}
 
 type Features = {
   addons?: boolean;
@@ -74,6 +107,7 @@ export async function PUT(req: Request, { params }: { params: { slug: string } }
 
   await kvSet(keyFlags(slug), saved);
   await upsertInstallation(slug);
+  notifyPlatformRefresh(params.slug);
 
   // history compatta (manteniamo traccia)
   try {
