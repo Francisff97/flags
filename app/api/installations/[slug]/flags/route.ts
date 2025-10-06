@@ -194,7 +194,7 @@ export async function PUT(req: Request, { params }: { params: { slug: string } }
   await upsertInstallation(slug);
 
   // fire-and-forget (va bene non attendere)
-  notifyPlatformRefresh(slug).catch(() => {});
+  await notifyPlatformRefresh(slug);
 
   // history (compatta)
   try {
