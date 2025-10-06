@@ -2,28 +2,42 @@ import { NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
 import { upsertInstallation } from '@/lib/installations';
 import { verifySignature } from '@/lib/sign';
+
 export const runtime = 'nodejs';
+
 import crypto from 'crypto';
 
-/** URL di refresh: forza https, niente duplicati, no redirect */
-function resolveRefreshUrl(): string | null {
-  let raw =
-    (process.env.PLATFORM_REFRESH_URL || '').trim() ||
-    (process.env.PLATFORM_URL || '').trim() ||
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL.trim()}` : '');
+/** Ricava la URL di refresh partendo dalla piattaforma dell’installazione; fallback su ENV. */
+async function resolveRefreshUrl(slug: string): Promise<string | null> {
+  try {
+    const instRaw = await kvGet(`installations:${slug}`);
+    const inst = instRaw ? (typeof instRaw === 'string' ? JSON.parse(instRaw) : instRaw) : null;
 
-  if (!raw) return null;
+    let base =
+      (inst?.platform_url ?? '').trim() ||
+      (process.env.PLATFORM_REFRESH_URL || '').trim() || // se già completa, la normalizziamo sotto
+      (process.env.PLATFORM_URL || '').trim() ||
+      (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL.trim()}` : '');
 
-  raw = raw.replace(/\/+$/, '');
-  raw = raw.replace(/^http:\/\//i, 'https://');
+    if (!base) return null;
 
-  if (!/\/api\/flags\/refresh$/i.test(raw)) {
-    raw = `${raw}/api/flags/refresh`;
+    // forza https e normalizza
+    base = base.replace(/^http:\/\//i, 'https://').replace(/\/+$/, '');
+
+    // se non termina con /api/flags/refresh, aggiungilo
+    if (!/\/api\/flags\/refresh$/i.test(base)) {
+      // se era già una PLATFORM_REFRESH_URL completa, ha già /api/flags/refresh
+      // altrimenti la costruiamo
+      base = base.endsWith('/api') ? `${base}/flags/refresh` : `${base}/api/flags/refresh`;
+    }
+
+    return base;
+  } catch {
+    return null;
   }
-  return raw;
 }
 
-/** Secret: SIGNING_SECRET prima, poi fallback */
+/** Secret per la firma */
 function getSigningSecret(): string {
   return (
     (process.env.SIGNING_SECRET || '').trim() ||
@@ -33,15 +47,16 @@ function getSigningSecret(): string {
   );
 }
 
-/** 🔔 NOTA: niente export qui! Funzione interna alla route */
+/** Funzione interna: notifica la piattaforma dopo l’update dei flags. */
 async function notifyPlatformRefresh(slug: string): Promise<void> {
-  const url = resolveRefreshUrl();
+  const url = await resolveRefreshUrl(slug);
   const secret = getSigningSecret();
 
   if (!url || !secret) {
     console.warn('[notify->platform] missing url/secret', {
       hasUrl: !!url,
       secretLen: secret?.length || 0,
+      slug,
     });
     return;
   }
@@ -60,7 +75,7 @@ async function notifyPlatformRefresh(slug: string): Promise<void> {
   try {
     const res = await fetch(url, {
       method: 'POST',
-      redirect: 'error', // evita 301 che spogliano body+headers
+      redirect: 'error', // evita redirect che spogliano body/headers
       headers: {
         Accept: 'application/json',
         'Content-Type': 'application/json',
@@ -74,10 +89,10 @@ async function notifyPlatformRefresh(slug: string): Promise<void> {
     console.warn('[notify->platform] <<', {
       status: res.status,
       ok: res.ok,
-      preview: text.slice(0, 120),
+      preview: text.slice(0, 160),
     });
   } catch (e: any) {
-    console.warn('[notify->platform] fetch error', { message: e?.message || String(e) });
+    console.warn('[notify->platform] fetch error', { message: e?.message || String(e), slug });
   }
 }
 
@@ -101,13 +116,16 @@ const MAX_HISTORY = 50;
 
 function safeParse<T = any>(raw: any): T | null {
   try {
-    if (typeof raw !== 'string') return raw ?? null;
+    if (raw == null) return null;
+    if (typeof raw !== 'string') return raw as T;
     let x: any = JSON.parse(raw);
     if (typeof x === 'string') {
       try { x = JSON.parse(x); } catch {}
     }
     return x ?? null;
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 
 // ---------- GET ----------
@@ -151,10 +169,11 @@ export async function PUT(req: Request, { params }: { params: { slug: string } }
 
   await kvSet(keyFlags(slug), saved);
   await upsertInstallation(slug);
-  // fire-and-forget
+
+  // notifica asincrona (non blocco la response)
   notifyPlatformRefresh(slug);
 
-  // history
+  // history compatta
   try {
     const hPrev = await kvGet(keyHistory(slug));
     const arr: FlagsDoc[] = safeParse(hPrev) ?? [];
