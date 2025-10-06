@@ -2,32 +2,43 @@ import { NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
 import { upsertInstallation } from '@/lib/installations';
 import { verifySignature } from '@/lib/sign';
-export const runtime = 'nodejs'; // se non c’è già
+export const runtime = 'nodejs';
 import crypto from 'crypto';
 
+/**
+ * Costruisce la refresh URL:
+ * - preferisce PLATFORM_REFRESH_URL se presente
+ * - altrimenti PLATFORM_URL + /api/flags/refresh
+ * - altrimenti https://VERCEL_URL + /api/flags/refresh
+ * - forza sempre https e niente doppio /api/flags/refresh
+ */
 function resolveRefreshUrl(): string | null {
-  // 1) prendi refresh URL se presente, altrimenti costruiscila da PLATFORM_URL/VERCEL_URL
-  let url =
+  let raw =
     (process.env.PLATFORM_REFRESH_URL || '').trim() ||
-    (process.env.PLATFORM_URL ? `${process.env.PLATFORM_URL.replace(/\/+$/, '')}/api/flags/refresh` : '') ||
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL.replace(/\/+$/, '')}/api/flags/refresh` : '');
+    (process.env.PLATFORM_URL || '').trim() ||
+    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL.trim()}` : '');
 
-  if (!url) return null;
+  if (!raw) return null;
 
-  // 2) normalizza: sempre HTTPS
-  url = url.replace(/^http:\/\//i, 'https://');
+  // rimuovi trailing slash
+  raw = raw.replace(/\/+$/, '');
 
-  // 3) normalizza path
-  url = url.replace(/\/+$/, '');
-  if (!/\/api\/flags\/refresh$/.test(url)) url += '/api/flags/refresh';
+  // se è http, forziamo https
+  raw = raw.replace(/^http:\/\//i, 'https://');
 
-  return url;
+  // se non include già /api/flags/refresh, aggiungilo
+  if (!/\/api\/flags\/refresh$/i.test(raw)) {
+    raw = `${raw}/api/flags/refresh`;
+  }
+
+  return raw;
 }
 
+/** prende il secret (prima SIGNING_SECRET come hai settato in Vercel) */
 function getSigningSecret(): string {
   return (
-    (process.env.SIGNING_SECRET || '').trim() ||           // <— Vercel: usa questa
-    (process.env.FLAGS_SIGNING_SECRET || '').trim() ||     // fallback
+    (process.env.SIGNING_SECRET || '').trim() ||
+    (process.env.FLAGS_SIGNING_SECRET || '').trim() ||
     (process.env.FLAGS_HMAC_SECRET || '').trim() ||
     (process.env.FLAGS_SHARED_SECRET || '').trim()
   );
@@ -39,7 +50,8 @@ export async function notifyPlatformRefresh(slug: string): Promise<void> {
 
   if (!url || !secret) {
     console.warn('[notify->platform] missing url/secret', {
-      hasUrl: !!url, secretLen: secret?.length || 0
+      hasUrl: !!url,
+      secretLen: secret?.length || 0,
     });
     return;
   }
@@ -47,29 +59,37 @@ export async function notifyPlatformRefresh(slug: string): Promise<void> {
   const body = JSON.stringify({ slug });
   const sig  = crypto.createHmac('sha256', secret).update(body, 'utf8').digest('hex');
 
-  // log diagnostico
+  // log diagnostico (puoi rimuoverlo quando è ok)
   console.warn('[notify->platform] >>', {
-    url, slug, bodyLen: body.length, sigPreview: sig.slice(0, 12), secretLen: secret.length
+    url,
+    slug,
+    bodyLen: body.length,
+    sigPreview: sig.slice(0, 12),
+    secretLen: secret.length,
   });
 
   try {
     const res = await fetch(url, {
       method: 'POST',
-      // non seguire redirect che spogliano body+headers
+      // NON seguire redirect: i 301 http->https spogliano body+headers
       redirect: 'error',
       headers: {
-        'Accept': 'application/json',
+        Accept: 'application/json',
         'Content-Type': 'application/json',
         'X-Signature': sig,
-        // opzionale ma esplicito:
+        // esplicito: evita chunking su alcuni proxy
         'Content-Length': Buffer.byteLength(body).toString(),
       },
       body,
     });
 
     const text = await res.text().catch(() => '');
-    console.warn('[notify->platform] <<', { status: res.status, ok: res.ok, preview: text.slice(0, 120) });
-  } catch (e:any) {
+    console.warn('[notify->platform] <<', {
+      status: res.status,
+      ok: res.ok,
+      preview: text.slice(0, 120),
+    });
+  } catch (e: any) {
     console.warn('[notify->platform] fetch error', { message: e?.message || String(e) });
   }
 }
@@ -136,7 +156,6 @@ export async function PUT(req: Request, { params }: { params: { slug: string } }
     announcements:       !!incFeat.announcements,
   };
 
-  // 🔒 SOVRASCRITTURA TOTALE (nessun merge col “current”)
   const saved: FlagsDoc = {
     features: nextFeat,
     updated_at: Date.now(),
@@ -145,9 +164,10 @@ export async function PUT(req: Request, { params }: { params: { slug: string } }
 
   await kvSet(keyFlags(slug), saved);
   await upsertInstallation(slug);
-  notifyPlatformRefresh(params.slug);
+  // fire & forget va bene; se preferisci attendere, metti "await"
+  notifyPlatformRefresh(slug);
 
-  // history compatta (manteniamo traccia)
+  // history
   try {
     const hPrev = await kvGet(keyHistory(slug));
     const arr: FlagsDoc[] = safeParse(hPrev) ?? [];
