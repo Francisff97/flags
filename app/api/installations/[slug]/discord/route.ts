@@ -14,7 +14,12 @@ function resolveRefreshUrl(): string | null {
 }
 
 function getSigningSecret(): string {
-  return (process.env.FLAGS_SIGNING_SECRET || '').trim();
+  // prende il primo valorizzato tra questi (in ordine)
+  return (
+    (process.env.FLAGS_SIGNING_SECRET || '').trim() ||
+    (process.env.FLAGS_HMAC_SECRET || '').trim() ||
+    (process.env.FLAGS_SHARED_SECRET || '').trim()
+  );
 }
 
 async function notifyPlatformRefresh(slug: string): Promise<void> {
@@ -24,6 +29,9 @@ async function notifyPlatformRefresh(slug: string): Promise<void> {
 
   const body = JSON.stringify({ slug });
   const sig = crypto.createHmac('sha256', secret).update(body, 'utf8').digest('hex');
+
+  // LOG TEMPORANEO (rimuovi quando ok)
+  console.warn('[notify->platform]', { url, slug, bodyLen: body.length, sigPreview: sig.slice(0, 12) });
 
   fetch(url, {
     method: 'POST',
