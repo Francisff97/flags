@@ -5,13 +5,7 @@ import { verifySignature } from '@/lib/sign';
 export const runtime = 'nodejs';
 import crypto from 'crypto';
 
-/**
- * Costruisce la refresh URL:
- * - preferisce PLATFORM_REFRESH_URL se presente
- * - altrimenti PLATFORM_URL + /api/flags/refresh
- * - altrimenti https://VERCEL_URL + /api/flags/refresh
- * - forza sempre https e niente doppio /api/flags/refresh
- */
+/** URL di refresh: forza https, niente duplicati, no redirect */
 function resolveRefreshUrl(): string | null {
   let raw =
     (process.env.PLATFORM_REFRESH_URL || '').trim() ||
@@ -20,21 +14,16 @@ function resolveRefreshUrl(): string | null {
 
   if (!raw) return null;
 
-  // rimuovi trailing slash
   raw = raw.replace(/\/+$/, '');
-
-  // se è http, forziamo https
   raw = raw.replace(/^http:\/\//i, 'https://');
 
-  // se non include già /api/flags/refresh, aggiungilo
   if (!/\/api\/flags\/refresh$/i.test(raw)) {
     raw = `${raw}/api/flags/refresh`;
   }
-
   return raw;
 }
 
-/** prende il secret (prima SIGNING_SECRET come hai settato in Vercel) */
+/** Secret: SIGNING_SECRET prima, poi fallback */
 function getSigningSecret(): string {
   return (
     (process.env.SIGNING_SECRET || '').trim() ||
@@ -44,7 +33,8 @@ function getSigningSecret(): string {
   );
 }
 
-export async function notifyPlatformRefresh(slug: string): Promise<void> {
+/** 🔔 NOTA: niente export qui! Funzione interna alla route */
+async function notifyPlatformRefresh(slug: string): Promise<void> {
   const url = resolveRefreshUrl();
   const secret = getSigningSecret();
 
@@ -59,7 +49,6 @@ export async function notifyPlatformRefresh(slug: string): Promise<void> {
   const body = JSON.stringify({ slug });
   const sig  = crypto.createHmac('sha256', secret).update(body, 'utf8').digest('hex');
 
-  // log diagnostico (puoi rimuoverlo quando è ok)
   console.warn('[notify->platform] >>', {
     url,
     slug,
@@ -71,13 +60,11 @@ export async function notifyPlatformRefresh(slug: string): Promise<void> {
   try {
     const res = await fetch(url, {
       method: 'POST',
-      // NON seguire redirect: i 301 http->https spogliano body+headers
-      redirect: 'error',
+      redirect: 'error', // evita 301 che spogliano body+headers
       headers: {
         Accept: 'application/json',
         'Content-Type': 'application/json',
         'X-Signature': sig,
-        // esplicito: evita chunking su alcuni proxy
         'Content-Length': Buffer.byteLength(body).toString(),
       },
       body,
@@ -164,7 +151,7 @@ export async function PUT(req: Request, { params }: { params: { slug: string } }
 
   await kvSet(keyFlags(slug), saved);
   await upsertInstallation(slug);
-  // fire & forget va bene; se preferisci attendere, metti "await"
+  // fire-and-forget
   notifyPlatformRefresh(slug);
 
   // history
