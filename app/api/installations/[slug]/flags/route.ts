@@ -2,69 +2,102 @@ import { NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
 import { upsertInstallation } from '@/lib/installations';
 import { verifySignature } from '@/lib/sign';
-
-export const runtime = 'nodejs';
-
+export const runtime = 'nodejs'; // se non c’è già
 import crypto from 'crypto';
 
-/** Ricava la URL di refresh partendo dalla piattaforma dell’installazione; fallback su ENV. */
-async function resolveRefreshUrl(slug: string): Promise<string | null> {
-  try {
-    const instRaw = await kvGet(`installations:${slug}`);
-    const inst = instRaw ? (typeof instRaw === 'string' ? JSON.parse(instRaw) : instRaw) : null;
-
-    let base =
-      (inst?.platform_url ?? '').trim() ||
-      (process.env.PLATFORM_REFRESH_URL || '').trim() || // se già completa, la normalizziamo sotto
-      (process.env.PLATFORM_URL || '').trim() ||
-      (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL.trim()}` : '');
-
-    if (!base) return null;
-
-    // forza https e normalizza
-    base = base.replace(/^http:\/\//i, 'https://').replace(/\/+$/, '');
-
-    // se non termina con /api/flags/refresh, aggiungilo
-    if (!/\/api\/flags\/refresh$/i.test(base)) {
-      // se era già una PLATFORM_REFRESH_URL completa, ha già /api/flags/refresh
-      // altrimenti la costruiamo
-      base = base.endsWith('/api') ? `${base}/flags/refresh` : `${base}/api/flags/refresh`;
-    }
-
-    return base;
-  } catch {
-    return null;
-  }
+function resolveRefreshUrl(): string | null {
+  const url = process.env.PLATFORM_REFRESH_URL
+    || (process.env.PLATFORM_URL ? `${process.env.PLATFORM_URL.replace(/\/+$/, '')}/api/flags/refresh` : '')
+    || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL.replace(/\/+$/, '')}/api/flags/refresh` : '');
+  return url || null;
 }
 
-/** Secret per la firma */
+// 🔒 lascia invariato il modo in cui scegli il secret
 function getSigningSecret(): string {
+  // prende il primo valorizzato tra questi (in ordine)
   return (
-    (process.env.SIGNING_SECRET || '').trim() ||
     (process.env.FLAGS_SIGNING_SECRET || '').trim() ||
+    (process.env.SIGNING_SECRET || '').trim() ||
     (process.env.FLAGS_HMAC_SECRET || '').trim() ||
     (process.env.FLAGS_SHARED_SECRET || '').trim()
   );
 }
 
-/** Funzione interna: notifica la piattaforma dopo l’update dei flags. */
+// --- helper: prende platform_url da /api/installations/:slug/meta ---
+async function fetchPlatformUrlFromMeta(slug: string): Promise<string | null> {
+  // base del server flags (questa app)
+  const selfBase =
+    (process.env.FLAGS_BASE_URL ?? '') ||
+    (process.env.PLATFORM_URL ?? '') ||
+    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '');
+
+  if (!selfBase) {
+    console.warn('[notify->platform] no self base url to reach /meta');
+    return null;
+  }
+
+  const metaUrl = `${selfBase.replace(/\/+$/, '')}/api/installations/${encodeURIComponent(slug)}/meta`;
+
+  try {
+    const r = await fetch(metaUrl, { method: 'GET', headers: { 'Accept': 'application/json' } });
+    if (!r.ok) {
+      console.warn('[notify->platform] meta fetch not ok', { slug, status: r.status });
+      return null;
+    }
+    const j = await r.json();
+    const platformUrl = (j?.platform_url ?? '').toString().trim();
+    return platformUrl || null;
+  } catch (e) {
+    console.warn('[notify->platform] meta fetch error', String(e));
+    return null;
+  }
+}
+
+// --- prende il secret dall'env (più nomi possibili) ---
+function getSigningSecret(): string {
+  return (
+    (process.env.FLAGS_SIGNING_SECRET ?? '').trim() ||
+    (process.env.SIGNING_SECRET ?? '').trim() ||
+    (process.env.FLAGS_HMAC_SECRET ?? '').trim() ||
+    (process.env.FLAGS_SHARED_SECRET ?? '').trim()
+  );
+}
+
+/* 👇 NUOVO: normalizza la base URL
+   - se manca lo schema, mette https://
+   - forza http -> https
+   - rimuove slash finali
+*/
+function normalizeBaseUrl(base: string): string {
+  let b = (base || '').trim();
+  if (!/^https?:\/\//i.test(b)) b = 'https://' + b;       // dominio nudo -> https
+  b = b.replace(/^http:\/\//i, 'https://');               // forza https
+  b = b.replace(/\/+$/, '');                              // no trailing slash
+  return b;
+}
+
+// --- SOSTITUISCI LA TUA notifyPlatformRefresh CON QUESTA (stessa logica + https) ---
 async function notifyPlatformRefresh(slug: string): Promise<void> {
-  const url = await resolveRefreshUrl(slug);
+  const platformBase = await fetchPlatformUrlFromMeta(slug);
   const secret = getSigningSecret();
 
-  if (!url || !secret) {
-    console.warn('[notify->platform] missing url/secret', {
-      hasUrl: !!url,
-      secretLen: secret?.length || 0,
-      slug,
+  if (!platformBase || !secret) {
+    console.warn('[notify->platform] missing data', {
+      hasPlatform: !!platformBase,
+      secretLen: secret.length,
     });
     return;
   }
 
-  const body = JSON.stringify({ slug });
+  // 👇 applico solo la normalizzazione http/https
+  const platformBaseNormalized = normalizeBaseUrl(platformBase);
+  const url = `${platformBaseNormalized}/api/flags/refresh`;
+
+  const body = JSON.stringify({ slug }); // nessuno spazio extra
   const sig  = crypto.createHmac('sha256', secret).update(body, 'utf8').digest('hex');
 
-  console.warn('[notify->platform] >>', {
+  // log diagnostico (lascia per ora)
+  console.warn('[notify->platform]', {
     url,
     slug,
     bodyLen: body.length,
@@ -72,28 +105,27 @@ async function notifyPlatformRefresh(slug: string): Promise<void> {
     secretLen: secret.length,
   });
 
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      redirect: 'error', // evita redirect che spogliano body/headers
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-        'X-Signature': sig,
-        'Content-Length': Buffer.byteLength(body).toString(),
-      },
-      body,
-    });
-
-    const text = await res.text().catch(() => '');
-    console.warn('[notify->platform] <<', {
-      status: res.status,
-      ok: res.ok,
-      preview: text.slice(0, 160),
-    });
-  } catch (e: any) {
-    console.warn('[notify->platform] fetch error', { message: e?.message || String(e), slug });
-  }
+  await fetch(url, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      'X-Signature': sig,
+      // opzionale: aiuta il debug lato Laravel
+      'Content-Length': Buffer.byteLength(body).toString(),
+      'User-Agent': 'flags-server/notify',
+    },
+    body,
+    cache: 'no-store',
+  }).then(async r => {
+    if (!r.ok) {
+      let payload: any = null;
+      try { payload = await r.text(); } catch {}
+      console.warn('platform refresh not ok:', r.status, payload);
+    }
+  }).catch(err => {
+    console.warn('platform refresh error:', String(err));
+  });
 }
 
 type Features = {
@@ -116,16 +148,13 @@ const MAX_HISTORY = 50;
 
 function safeParse<T = any>(raw: any): T | null {
   try {
-    if (raw == null) return null;
-    if (typeof raw !== 'string') return raw as T;
+    if (typeof raw !== 'string') return raw ?? null;
     let x: any = JSON.parse(raw);
     if (typeof x === 'string') {
       try { x = JSON.parse(x); } catch {}
     }
     return x ?? null;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
 // ---------- GET ----------
@@ -161,6 +190,7 @@ export async function PUT(req: Request, { params }: { params: { slug: string } }
     announcements:       !!incFeat.announcements,
   };
 
+  // 🔒 SOVRASCRITTURA TOTALE (nessun merge col “current”)
   const saved: FlagsDoc = {
     features: nextFeat,
     updated_at: Date.now(),
@@ -169,11 +199,9 @@ export async function PUT(req: Request, { params }: { params: { slug: string } }
 
   await kvSet(keyFlags(slug), saved);
   await upsertInstallation(slug);
+  notifyPlatformRefresh(params.slug);
 
-  // notifica asincrona (non blocco la response)
-  notifyPlatformRefresh(slug);
-
-  // history compatta
+  // history compatta (manteniamo traccia)
   try {
     const hPrev = await kvGet(keyHistory(slug));
     const arr: FlagsDoc[] = safeParse(hPrev) ?? [];
