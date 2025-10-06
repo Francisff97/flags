@@ -12,17 +12,6 @@ function resolveRefreshUrl(): string | null {
   return url || null;
 }
 
-// 🔒 lascia invariato il modo in cui scegli il secret
-function getSigningSecret(): string {
-  // prende il primo valorizzato tra questi (in ordine)
-  return (
-    (process.env.FLAGS_SIGNING_SECRET || '').trim() ||
-    (process.env.SIGNING_SECRET || '').trim() ||
-    (process.env.FLAGS_HMAC_SECRET || '').trim() ||
-    (process.env.FLAGS_SHARED_SECRET || '').trim()
-  );
-}
-
 // --- helper: prende platform_url da /api/installations/:slug/meta ---
 async function fetchPlatformUrlFromMeta(slug: string): Promise<string | null> {
   // base del server flags (questa app)
