@@ -3,6 +3,39 @@ import { NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
 import { verifySignature } from '@/lib/sign';
 import { addInstallation } from '@/lib/installations';
+export const runtime = 'nodejs'; // se non c’è già
+import crypto from 'crypto';
+
+function resolveRefreshUrl(): string | null {
+  const url = process.env.PLATFORM_REFRESH_URL
+    || (process.env.PLATFORM_URL ? `${process.env.PLATFORM_URL.replace(/\/+$/, '')}/api/flags/refresh` : '')
+    || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL.replace(/\/+$/, '')}/api/flags/refresh` : '');
+  return url || null;
+}
+
+function getSigningSecret(): string {
+  return (process.env.FLAGS_SIGNING_SECRET || '').trim();
+}
+
+async function notifyPlatformRefresh(slug: string): Promise<void> {
+  const url = resolveRefreshUrl();
+  const secret = getSigningSecret();
+  if (!url || !secret) return;
+
+  const body = JSON.stringify({ slug });
+  const sig = crypto.createHmac('sha256', secret).update(body, 'utf8').digest('hex');
+
+  fetch(url, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      'X-Signature': sig,
+    },
+    body,
+  }).catch(() => {});
+}
+
 
 const keyOf = (slug: string) => `installation:${slug}:discord`;
 
@@ -33,6 +66,7 @@ export async function PUT(req: Request, { params }: { params: { slug: string } }
 
   await kvSet(keyOf(params.slug), { guild_id, channels });
   await addInstallation(params.slug);
+  notifyPlatformRefresh(params.slug);
   return NextResponse.json({ ok: true, slug: params.slug, data: { guild_id, channels } });
 }
 
