@@ -21,31 +21,68 @@ function getSigningSecret(): string {
   );
 }
 
+// --- helper: prende platform_url da /api/installations/:slug/meta ---
+async function fetchPlatformUrlFromMeta(slug: string): Promise<string | null> {
+  // base del server flags (questa app)
+  const selfBase =
+    (process.env.FLAGS_BASE_URL ?? '') ||
+    (process.env.PLATFORM_URL ?? '') ||                                // se l’hai
+    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '');
+
+  if (!selfBase) {
+    console.warn('[notify->platform] no self base url to reach /meta');
+    return null;
+  }
+
+  const metaUrl = `${selfBase.replace(/\/+$/, '')}/api/installations/${encodeURIComponent(slug)}/meta`;
+
+  try {
+    const r = await fetch(metaUrl, { method: 'GET', headers: { 'Accept': 'application/json' } });
+    if (!r.ok) {
+      console.warn('[notify->platform] meta fetch not ok', { slug, status: r.status });
+      return null;
+    }
+    const j = await r.json();
+    const platformUrl = (j?.platform_url ?? '').toString().trim();
+    return platformUrl || null;
+  } catch (e) {
+    console.warn('[notify->platform] meta fetch error', String(e));
+    return null;
+  }
+}
+
+// --- prende il secret dall'env (più nomi possibili) ---
+function getSigningSecret(): string {
+  return (
+    (process.env.FLAGS_SIGNING_SECRET ?? '').trim() ||
+    (process.env.SIGNING_SECRET ?? '').trim() ||
+    (process.env.FLAGS_HMAC_SECRET ?? '').trim() ||
+    (process.env.FLAGS_SHARED_SECRET ?? '').trim()
+  );
+}
+
+// --- SOSTITUISCI LA TUA notifyPlatformRefresh CON QUESTA ---
 async function notifyPlatformRefresh(slug: string): Promise<void> {
-  const url = resolveRefreshUrl();
+  const platformBase = await fetchPlatformUrlFromMeta(slug);
   const secret = getSigningSecret();
-  if (!url || !secret) {
-    console.error('[notify->platform] missing url/secret', {
-      hasUrl: !!url,
-      secretLen: (secret || '').length,
-      envs: {
-        FLAGS_SIGNING_SECRET: (process.env.FLAGS_SIGNING_SECRET || '').length,
-        SIGNING_SECRET: (process.env.SIGNING_SECRET || '').length,
-        FLAGS_HMAC_SECRET:    (process.env.FLAGS_HMAC_SECRET    || '').length,
-        FLAGS_SHARED_SECRET:  (process.env.FLAGS_SHARED_SECRET  || '').length,
-      },
+
+  if (!platformBase || !secret) {
+    console.warn('[notify->platform] missing data', {
+      hasPlatform: !!platformBase,
+      secretLen: secret.length,
     });
     return;
   }
 
-  const body = JSON.stringify({ slug });
-  const sig = crypto.createHmac('sha256', secret).update(body, 'utf8').digest('hex');
+  const url = `${platformBase.replace(/\/+$/, '')}/api/flags/refresh`;
+  const body = JSON.stringify({ slug });                   // nessuno spazio extra
+  const sig  = crypto.createHmac('sha256', secret).update(body, 'utf8').digest('hex');
 
-  // LOG CHE SI VEDE SU VERCEL (Functions/Logs del deployment)
-  console.log('[notify->platform]', {
+  // log diagnostico (lascia per ora)
+  console.warn('[notify->platform]', {
     url,
     slug,
-    bodyLen: body.length, // deve essere 15
+    bodyLen: body.length,
     sigPreview: sig.slice(0, 12),
     secretLen: secret.length,
   });
@@ -56,11 +93,23 @@ async function notifyPlatformRefresh(slug: string): Promise<void> {
       Accept: 'application/json',
       'Content-Type': 'application/json',
       'X-Signature': sig,
+      // opzionale: aiuta il debug lato Laravel
+      'Content-Length': Buffer.byteLength(body).toString(),
+      'User-Agent': 'flags-server/notify',
     },
     body,
+    // IMPORTANT: evita re-try automatici
+    cache: 'no-store',
+  }).then(async r => {
+    if (!r.ok) {
+      let payload: any = null;
+      try { payload = await r.text(); } catch {}
+      console.warn('platform refresh not ok:', r.status, payload);
+    }
+  }).catch(err => {
+    console.warn('platform refresh error:', String(err));
   });
 }
-
 
 type Features = {
   addons?: boolean;
