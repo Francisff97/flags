@@ -37,6 +37,12 @@ async function notifyPlatformRefresh(slug: string): Promise<void> {
     (process.env.FLAGS_SHARED_SECRET || '').trim()
   );
 }
+  console.warn('[notify->platform]', {
+  url, slug, bodyLen: body.length,
+  sigPreview: sig.slice(0, 12),
+  secretLen: (process.env.FLAGS_SIGNING_SECRET || process.env.FLAGS_HMAC_SECRET || process.env.FLAGS_SHARED_SECRET || '').trim().length,
+});
+
 
   // fire-and-forget: non attendiamo il risultato
   fetch(url, {
