@@ -11,15 +11,6 @@ function resolveRefreshUrl(): string | null {
     || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL.replace(/\/+$/, '')}/api/flags/refresh` : '');
   return url || null;
 }
-function getSigningSecret(): string {
-  // prende il primo valorizzato tra questi (in ordine)
-  return (
-    (process.env.FLAGS_SIGNING_SECRET || '').trim() ||
-    (process.env.SIGNING_SECRET || '').trim() ||
-    (process.env.FLAGS_HMAC_SECRET || '').trim() ||
-    (process.env.FLAGS_SHARED_SECRET || '').trim()
-  );
-}
 
 // --- helper: prende platform_url da /api/installations/:slug/meta ---
 async function fetchPlatformUrlFromMeta(slug: string): Promise<string | null> {
