@@ -6,7 +6,7 @@
   "developer": {
     "name": "Francesco Design",
     "role": "Graphic Designer & Developer",
-    "avatar_url": "https://raw.githubusercontent.com/Francisff97/baseforge/main/image/FD.jpg",
+    "avatar_url": "https://flags.francescoferri.me/img/FD.jpg",
     "discord": "https://discord.gg/VqDp2SPM6N",
     "twitter": "https://x.com/Fdesign97",
     "email": "mailto:info@francescoferri.me"
@@ -17,7 +17,7 @@
       "title": "Email templates",
       "subtitle": "Create custom email templates for customers or admin notices.",
       "price_eur": 20,
-      "image": "https://raw.githubusercontent.com/Francisff97/baseforge/main/image/e-template.png",
+      "image": "https://flags.francescoferri.me/img/e-template.png",
       "cta_label": "Get the add-on",
       "cta_url": "https://discord.gg/VqDp2SPM6N"
     },
@@ -26,7 +26,7 @@
       "title": "Youtube Video",
       "subtitle": "Upload video tutorials into packs and coaches.",
       "price_eur": 25,
-      "image": "https://raw.githubusercontent.com/Francisff97/baseforge/main/image/yt_2.png",
+      "image": "https://flags.francescoferri.me/img/yt_2.png",
       "cta_label": "Get the add-on",
       "cta_url": "https://discord.gg/VqDp2SPM6N"
     },
@@ -35,7 +35,7 @@
       "title": "Discord integration",
       "subtitle": "Server announcements & feedback channels mirrored on a News/Feedback page.",
       "price_eur": 40,
-      "image": "https://raw.githubusercontent.com/Francisff97/baseforge/main/image/ds.png",
+      "image": "https://flags.francescoferri.me/img/ds.png",
       "cta_label": "Get the add-on",
       "cta_url": "https://discord.gg/VqDp2SPM6N"
     }
